@@ -1,0 +1,25 @@
+# Entornos y configuración local
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Python y empaquetado
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Herramientas de desarrollo
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Editores
+.idea/
+.vscode/
+*~
