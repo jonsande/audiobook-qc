@@ -3,8 +3,9 @@
 Proyecto Python para agilizar la corrección de audiolibros en Linux.
 Requiere Python 3.10 o superior.
 
-Estado actual: **Fase 0 técnicamente completada y modelo de dominio con
-persistencia SQLite**, sin GUI ni atajos. La captura manual sigue sin autoguardado.
+Estado actual: **Fase 0 técnicamente completada y Fase 1 completada**, con modelo
+de dominio y persistencia SQLite. Una CLI adicional integra captura y guardado
+en una sola ejecución, validada con mpv, Okular y PRIMARY reales; sin GUI ni atajos.
 El roadmap está en [STEPS.md](STEPS.md) y
 las reglas de desarrollo en [AGENTS.md](AGENTS.md).
 
@@ -80,7 +81,9 @@ dependen de las aplicaciones instaladas.
 │   └── audiobook_qc/
 │       ├── __init__.py
 │       ├── capture.py
+│       ├── capture_and_save.py
 │       ├── capture_probe.py
+│       ├── capture_save_probe.py
 │       ├── captured_incident.py
 │       ├── diagnostics.py
 │       ├── incident.py
@@ -96,6 +99,7 @@ dependen de las aplicaciones instaladas.
 │       └── sqlite_repository.py
 └── tests/
     ├── test_capture.py
+    ├── test_capture_and_save.py
     ├── test_diagnostics.py
     ├── test_incident.py
     ├── test_mpv.py
@@ -115,7 +119,8 @@ coordina las tres fuentes mediante funciones inyectables. El objeto provisional
 de captura vive en `captured_incident.py`, sin imports de los adaptadores ni CLI.
 
 La Fase 0 está técnicamente completada con las limitaciones documentadas en
-`STEPS.md`. La persistencia se desarrolla en la Fase 1.
+`STEPS.md`. La Fase 1 está completada; el caso de uso `capture_and_save.py`
+conecta captura, conversión explícita y guardado con dependencias sustituibles.
 Los supuestos que requieren experimentación están en [STEPS.md](STEPS.md).
 La Fase 3 queda bloqueada hasta recibir una muestra de la plantilla Excel.
 
@@ -360,9 +365,10 @@ aplicación. Tampoco se demuestra su correspondencia con el PDF/página consulta
 Seleccionar un servicio no resuelve las ambigüedades de varias vistas: usa una
 sola ventana/documento por servicio. No cambies las fuentes durante la captura.
 
-Esta utilidad sigue siendo una prueba de integración de Fase 0 y no guarda
-automáticamente. La persistencia de Fase 1 se usa por separado. No hay hotkeys,
-GUI ni Excel. La evidencia real está en [STEPS.md](STEPS.md).
+`capture_probe` sigue siendo una prueba de integración de Fase 0 en memoria.
+Para capturar y guardar en una sola ejecución usa `capture_save_probe`, descrito
+abajo. No hay hotkeys, GUI ni Excel. La evidencia real de captura está en
+[STEPS.md](STEPS.md).
 
 ## Persistencia de prueba (Fase 1)
 
@@ -421,3 +427,59 @@ python -m audiobook_qc.incident_probe --db /tmp/audiobook-qc-demo.sqlite3 get 1
 acepta `--generic-description` y `--custom-comment`. Usa el ID devuelto por `add`
 si reutilizas una base existente. La prueba no requiere audio, PDF, mpv, Okular ni
 X11 reales. La demostración de cierre y reapertura está en [STEPS.md](STEPS.md).
+
+## Capturar y guardar desde CLI (integración mínima de Fases 0 y 1)
+
+Inicializa explícitamente una base dedicada, una sola vez, y ejecuta el comando
+de captura con el audio pausado y la frase seleccionada como en Fase 0:
+
+```bash
+python -m audiobook_qc.incident_probe --db /tmp/audiobook-qc-capturas.sqlite3 init
+python -m audiobook_qc.capture_save_probe --db /tmp/audiobook-qc-capturas.sqlite3 INTER \
+    --mpv-socket /tmp/audiobook-qc-mpv.sock \
+    --okular-service org.kde.okular-12345
+# Sustituye el ID por el devuelto por la captura; este comando abre otra conexión.
+python -m audiobook_qc.incident_probe --db /tmp/audiobook-qc-capturas.sqlite3 get 1
+```
+
+`--db` es obligatorio, sin base global predeterminada. Las opciones de mpv y
+Okular tienen el mismo significado y valores predeterminados que en
+`capture_probe`. Se reutiliza la captura existente con el orden validar código
+→ PRIMARY → Okular → mpv; siguen vigentes sus límites sobre procedencia del
+texto, varias vistas y lecturas no atómicas. No selecciones otro texto al
+preparar el comando.
+
+El caso de uso `capture_and_save_incident(code, capture=..., repository=...)`
+invoca la captura inyectada, construye `Incident.from_capture()` y llama a
+`repository.add()`. Devuelve la entidad con el ID asignado por el repositorio.
+No conoce SQLite ni las aplicaciones: el repositorio solo necesita el método
+`add`, y la captura es una función sustituible. La CLI compone los adaptadores,
+abre/cierra la conexión y muestra la entidad guardada como JSON con ID, datos
+capturados, fechas UTC, `generic_description=null`, `custom_comment=null` y
+`exported=false`. No se editan ni se concatenan descripción y comentario.
+
+No hay inicialización automática: se mantiene el comando `init` de Fase 1 para
+que crear el esquema sea una operación deliberada. Abrir una ruta inexistente
+puede crear un archivo SQLite vacío; el guardado comprueba el esquema después
+de capturar y falla si falta la versión 1 compatible, sin crear tablas. Ejecuta
+`init` antes de capturar. El esquema permanece en versión 1, sin migraciones.
+
+Los errores de captura, validación o SQLite se notifican en stderr con salida 1,
+sin imprimir una entidad como guardada. Un fallo de captura no llama a `add`;
+el caso de uso propaga los errores de construcción y persistencia. Una captura
+fallida no deja una incidencia parcial y no se reintenta automáticamente.
+
+Los tests verifican el flujo con fuentes en memoria y SQLite temporal real;
+no manipulan ventanas. Esta integración añade solo captura y guardado por
+ejecución manual. Quedan fuera atajos globales, daemon, GUI, edición interactiva,
+catálogo definitivo de descripciones, Excel, sincronización, concurrencia
+avanzada, migraciones e instalador. No completa la Fase 2 de atajos.
+
+La validación real del 29 de octubre de 2026 guardó y recuperó en otro proceso
+la incidencia de la página 33 del PDF del usuario, con posición **19.300243 s**,
+texto PRIMARY exacto e ID **1**. Se comprobó igualdad binaria del timestamp y
+que tres fallos controlados (PRIMARY inaccesible, servicio Okular inexistente y
+socket mpv inexistente) no añadían registros parciales. El texto conserva el
+formato extraído del PDF, incluidos saltos, guiones y espacios; la ruta del
+audio se conserva relativa porque así la comunicó mpv. Los comandos, resultados
+y límites están en [STEPS.md](STEPS.md#validación-real-de-captura-y-persistencia-29-de-octubre-de-2026).

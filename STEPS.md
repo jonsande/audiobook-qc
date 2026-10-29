@@ -1,8 +1,9 @@
 # Roadmap
 
 Estado actual: Fase 0 técnicamente completada con las limitaciones documentadas.
-Fase 1 implementada y verificada con SQLite real tras cerrar/reabrir conexiones
-y procesos. La Fase 2 no se ha iniciado; no hay autoguardado desde la captura.
+Fase 1 completada y verificada con SQLite real tras cerrar/reabrir conexiones
+y procesos. Integración mínima de captura y guardado validada mediante CLI con
+mpv, Okular y PRIMARY reales; la Fase 2 de atajos sigue pendiente.
 
 ## Fase 0: fundación y pruebas de integración con el entorno
 
@@ -403,10 +404,148 @@ estado de exportación, conversión y CLI; sin depender de archivos externos.
 Decisiones pendientes de otra intervención: migraciones al cambiar el esquema,
 resolución de ediciones concurrentes (ahora gana la última escritura), política
 sobre editar incidencias exportadas (el booleano solo cambia explícitamente),
-reglas editoriales de descripción y conexión de captura con guardado/atajos.
+reglas editoriales de descripción y conexión de captura con atajos.
 No hay exportación, Excel, GUI, hotkeys ni configuración de usuario.
 
+## Integración mínima de Fases 0 y 1: capturar y guardar desde CLI
+
+**Estado:** completada en este alcance mínimo y verificada el 28 de octubre de
+2026 mediante tests y demostración con SQLite real y fuentes simuladas.
+
+**Alcance:** una acción manual que captura el contexto existente, convierte
+explícitamente a `Incident`, guarda en SQLite y devuelve la entidad con su ID.
+No implica completar la Fase 2 de atajos.
+
+**Criterio de salida:** tests del caso de uso con captura y repositorio
+sustituibles; integración con SQLite temporal real que conserve todos los datos
+y los valores iniciales de Fase 1, devuelva el ID y demuestre que los fallos no se
+presentan como éxito; CLI con ruta de base explícita; suite completa y Ruff
+correctos. La demostración sin escritorio no certifica una nueva prueba con
+PRIMARY, Okular y mpv reales.
+
+### Diseño y límites
+
+- `capture_and_save_incident` recibe una función de captura y un repositorio con
+  `add` (protocolo mínimo). Ejecuta captura → `Incident.from_capture` → `add` y
+  devuelve exactamente la entidad guardada, propagando errores.
+- `capture_save_probe --db RUTA CODIGO` compone las fuentes existentes; acepta
+  `--mpv-socket` y `--okular-service`, cierra la conexión y muestra JSON con ID.
+  `capture_probe` conserva su comportamiento en memoria. No se han modificado
+  captura, entidad ni repositorio de las fases anteriores.
+- Inicialización deliberadamente separada: `incident_probe --db RUTA init`.
+  Abrir una base puede crear un archivo vacío; el intento de guardar tras la
+  captura rechaza esquemas no inicializados o incompatibles sin crear tablas.
+  Sin base global, cambio de esquema ni inicialización dentro del caso de uso.
+- Descripción genérica y comentario particular empiezan en None, por separado;
+  `exported=False`, ID asignado por SQLite y fechas conscientes UTC.
+- Sin hotkeys, daemon, GUI, edición interactiva, catálogo definitivo de
+  descripciones, Excel, sincronización, concurrencia avanzada, migraciones ni
+  instalador. Persisten los límites experimentales de Fase 0: no atomicidad,
+  procedencia/vigencia de PRIMARY y ambigüedad de varias vistas por servicio.
+
+### Verificación y demostración
+
+Suite completa: **262 tests superados** (250 previos y 12 nuevos).
+`ruff check .` y `ruff format --check .` correctos. Los tests nuevos cubren
+conversión antes de guardar, repositorio sustituible, devolución de su entidad,
+captura existente con fuentes en memoria y orden conservado, SQLite real tras
+reabrir, ID secuencial, datos y precisión intactos, valores iniciales, errores de
+captura/conversión/persistencia, CLI con ruta explícita y validación de argumentos,
+esquema no inicializado y fallo de escritura SQL sin éxito ni registro parcial.
+
+Demostración con un directorio temporal privado
+`/tmp/audiobook-qc-save-demo-0wch1z_5`: un proceso ejecutó `incident_probe init`;
+se ejecutó `capture_save_probe.main` con las tres lecturas sustituidas por datos
+sintéticos, manteniendo el coordinador de captura y SQLite reales. Después,
+otro proceso ejecutó `incident_probe get 1`; se comparó su JSON completo con la
+entidad leída en una nueva conexión. Resultado: una incidencia, ID **1**, tipo
+`INTER`, página **127**, ruta relativa y URL originales conservadas, descripción
+y comentario nulos y estado no exportado. La posición fue `1104.5171234567`, con
+representación binary64 `0x1.1421188cfba15p+10`, y el texto exacto:
+
+```text
+'  ¿Qué quieres decir?\nUna palabra parti-\r\nda. é\n'
+```
+
+La base temporal se eliminó al terminar la demostración. No se manipularon
+ventanas, selecciones X11, archivos del usuario ni configuración personal.
+Este ensayo con dobles no valida el entorno gráfico ni los atajos. La validación
+posterior con las tres fuentes reales se documenta a continuación.
+
+### Validación real de captura y persistencia (29 de octubre de 2026)
+
+**Resultado:** flujo por CLI validado con las aplicaciones del usuario, sin
+dobles ni cambios de código. No completa la Fase 2 de atajos del roadmap.
+
+Entorno: Ubuntu 22.04.5, sesión X11/GNOME, mpv 0.34.1, Okular 21.12.3,
+`busctl` y `xclip`. El usuario abrió el audio con IPC, lo pausó manualmente y
+seleccionó la frase en su PDF, indicando página 33 y texto esperado. El sandbox
+bloqueó consultas de X11/IPC; las comprobaciones reales se hicieron fuera de él
+con autorización. Inicialmente no había servicio de Okular y el socket de la
+prueba antigua rechazaba conexiones: un archivo socket existente no demuestra
+que mpv siga activo.
+
+Base temporal dedicada, inicializada explícitamente antes de capturar:
+`/tmp/audiobook-qc-real-mjz7z4xb/incidencias.sqlite3`. Se conserva junto con
+`fuentes.json`, `captura.json`, `recuperada.json` y `fallos.json` como evidencia
+temporal; no se han modificado los archivos ni las preferencias del usuario.
+
+Comandos de consulta y captura ejecutados (desde la raíz del proyecto):
+
+```bash
+.venv/bin/python -m audiobook_qc.okular_probe --list-services
+.venv/bin/python -m audiobook_qc.okular_probe --service org.kde.okular-406490
+.venv/bin/python -m audiobook_qc.mpv_probe --socket /tmp/audiobook-qc-real-mjz7z4xb/mpv.sock
+.venv/bin/python -m audiobook_qc.selection_probe --selection primary
+.venv/bin/python -m audiobook_qc.capture_save_probe \
+    --db /tmp/audiobook-qc-real-mjz7z4xb/incidencias.sqlite3 INTER \
+    --mpv-socket /tmp/audiobook-qc-real-mjz7z4xb/mpv.sock \
+    --okular-service org.kde.okular-406490
+.venv/bin/python -m audiobook_qc.incident_probe \
+    --db /tmp/audiobook-qc-real-mjz7z4xb/incidencias.sqlite3 get 1
+```
+
+El servicio y el directorio temporal corresponden a esta sesión: al repetir,
+crear otro directorio privado/base mediante `mktemp -d` e `incident_probe init`,
+arrancar mpv con `--input-ipc-server=RUTA/mpv.sock`, abrir el PDF y listar los
+servicios actuales. No se requiere configuración oculta. Una nueva captura
+añade otra incidencia; usar siempre el ID devuelto.
+
+Resultados contrastados contra las fuentes antes de capturar, la salida JSON de
+la CLI y la lectura posterior mediante el repositorio en otro proceso:
+
+- ID **1**, tipo técnico de prueba `INTER`, una sola incidencia guardada.
+- Audio `011_El_partido_Part1_Cap02_v1.wav`, pausado en **19.300243 s**. mpv
+  comunicó `./011_El_partido_Part1_Cap02_v1.wav`; se conserva esa ruta relativa,
+  sin reconstruir la ruta absoluta indicada por el usuario.
+- Documento `/home/jon/Documentos/correcciones/bocachica/pedidos/10_2026/el_partido/El_partido_TRIPAS.pdf`,
+  servicio `org.kde.okular-406490`, página nativa **33**, coincidente con la
+  página que el usuario indicó ver en Okular.
+- PRIMARY devolvió **141 caracteres**. Se conservó exactamente el texto del
+  PDF, incluyendo espacios exteriores, saltos, minúsculas en `xix` y guion:
+
+```text
+' Pero el\nimpetuoso desarrollo industrial de finales del siglo xix relega inexo-\nrablemente el mundo rural a los márgenes de la vida moderna. '
+```
+
+- La comparación de todos los campos capturados y de la entidad recuperada fue
+  exacta. El timestamp nativo, JSON y SQLite conservaron el mismo binary64:
+  `0x1.34cdcb9a9da59p+4`. Se volvió a consultar mpv y seguía en esa posición.
+- Descripción genérica y comentario particular nulos, `exported=False`.
+- Tres intentos adicionales ejecutaron la CLI real con fallos controlados:
+  `DISPLAY` vacío solo en el subproceso (PRIMARY inaccesible), servicio Okular
+  inexistente y socket mpv inexistente. Cada uno devolvió salida **1**, stderr
+  con la fuente correspondiente y stdout vacío. Tras cada intento, el repositorio
+  conservó exactamente la misma incidencia: sin altas parciales ni cambios.
+
+No se detectó un defecto que requiriera corregir código. Esta prueba valida la
+captura y persistencia manuales; no demuestra atomicidad, origen/vigencia de
+PRIMARY en general, resolución de varias vistas ni atajos globales.
+
 ## Fase 2: captura real mediante atajos
+
+**Estado:** pendiente. El flujo manual de captura y guardado está validado con
+aplicaciones reales; los atajos siguen sin implementar ni verificar.
 
 **Objetivo:** conectar atajos por tipo de incidencia con los adaptadores y la
 persistencia. El usuario pausa manualmente mpv con Espacio, selecciona una frase
