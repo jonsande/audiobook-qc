@@ -431,11 +431,16 @@ def test_mode_flag_activation_failure_releases_bindings_again(setup):
 
 
 def test_cli_mode_status_and_operations_use_fake_gnome_only(
-    tmp_path, monkeypatch, capsys
+    tmp_path, monkeypatch, capsys, isolated_desktop_sources
 ):
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("DISPLAY", ":0")
+    from audiobook_qc.jobs import JobStore
+
+    store = JobStore()
+    store.configure(str(tmp_path / "trabajos"))
+    store.select(store.create("Prueba GNOME").id)
     backend = MemoryBindings([shortcut(37, "F6")])
     monkeypatch.setattr(correction_mode, "GSettingsShortcuts", lambda: backend)
     assert correction_mode.main(["status"]) == 1

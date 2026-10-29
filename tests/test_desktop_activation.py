@@ -14,21 +14,25 @@ from audiobook_qc.captured_incident import CapturedIncident, IncidentType
 from audiobook_qc.integrations import notifications
 from audiobook_qc.integrations.activation import ActivationBusy, activation_guard
 from audiobook_qc.integrations.notifications import NotificationError
+from audiobook_qc.jobs import JobStore, job_database
 from audiobook_qc.sqlite_repository import SQLiteIncidentRepository
 
 
 @pytest.fixture(autouse=True)
-def authorized_context(monkeypatch: pytest.MonkeyPatch) -> None:
+def authorized_context(
+    monkeypatch: pytest.MonkeyPatch, isolated_desktop_sources
+) -> None:
     """Esta suite prueba captura/avisos; el filtro se prueba por separado."""
     monkeypatch.setattr(capture_save_probe, "check_desktop_activation", lambda: None)
 
 
 @pytest.fixture
 def database(tmp_path: Path) -> Path:
-    path = tmp_path / "desktop.sqlite3"
-    with SQLiteIncidentRepository(path) as repository:
-        repository.initialize()
-    return path
+    store = JobStore()
+    store.configure(str(tmp_path / "trabajos"))
+    job = store.create("Libro de prueba")
+    store.select(job.id)
+    return job_database(job)
 
 
 @pytest.fixture
@@ -73,7 +77,7 @@ def test_desktop_command_maps_code_to_existing_use_case_and_notifies_after_commi
         assert stored.selected_text == "  Texto parti-\r\ndo. e\u0301\n"
         assert stored.audio_position_seconds.hex() == (19.300243).hex()
         assert summary == "Incidencia guardada"
-        assert body == f"{code} · ID 1" and error is False
+        assert body == f"{code} registrada (#1) — Libro de prueba" and error is False
         events.append("notification")
 
     monkeypatch.setattr(capture_save_probe, "capture_and_save_incident", execute)
@@ -107,7 +111,15 @@ def test_failure_notifies_without_success_or_partial_record(
     assert capture_save_probe.main(["--desktop", "--db", str(database), "TEXT"]) == 1
     output = capsys.readouterr()
     assert output.out == "" and str(error) in output.err
-    assert messages == [("Incidencia no guardada", f"TEXT: {error}", {"error": True})]
+    assert messages == [
+        (
+            "Incidencia no guardada",
+            "Error de "
+            f"{'captura' if isinstance(error, CaptureError) else 'persistencia'}"
+            f" · TEXT: {error}",
+            {"error": True},
+        )
+    ]
     with SQLiteIncidentRepository(database) as repository:
         assert repository.list() == []
 
@@ -188,7 +200,10 @@ def test_completed_consecutive_activations_are_independent_and_guard_is_released
             == 0
         )
     assert capture == ["RUID", "RUID"]
-    assert messages == ["RUID · ID 1", "RUID · ID 2"]
+    assert messages == [
+        "RUID registrada (#1) — Libro de prueba",
+        "RUID registrada (#2) — Libro de prueba",
+    ]
     with SQLiteIncidentRepository(database) as repository:
         assert len(repository.list()) == 2
 
@@ -206,18 +221,21 @@ def test_notification_failure_after_save_does_not_report_failed_persistence(
     assert capture_save_probe.main(["--desktop", "--db", str(database), "RESP"]) == 0
     output = capsys.readouterr()
     assert json.loads(output.out)["id"] == 1
-    assert "Incidencia guardada: RESP · ID 1" in output.err
+    assert "Incidencia guardada: RESP registrada (#1) — Libro de prueba" in output.err
     assert "no guardada" not in output.err
     with SQLiteIncidentRepository(database) as repository:
         assert len(repository.list()) == 1
 
 
 def test_uninitialized_database_is_not_initialized_by_desktop_mode(
-    tmp_path: Path,
+    database: Path,
     capture: list[str],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    path = tmp_path / "fresh.sqlite3"
+    path = database
+    path.unlink()
+    with sqlite3.connect(path):
+        pass
     messages = []
     monkeypatch.setattr(
         capture_save_probe,
@@ -225,7 +243,8 @@ def test_uninitialized_database_is_not_initialized_by_desktop_mode(
         lambda summary, body, **kwargs: messages.append(summary),
     )
     assert capture_save_probe.main(["--desktop", "--db", str(path), "OTRO"]) == 1
-    assert messages == ["Incidencia no guardada"]
+    assert messages == ["Trabajo inválido o inaccesible"]
+    assert capture == []
     with sqlite3.connect(path) as connection:
         assert connection.execute("PRAGMA user_version").fetchone()[0] == 0
         assert connection.execute("SELECT name FROM sqlite_master").fetchall() == []
@@ -298,7 +317,7 @@ def test_guard_excludes_another_process_and_remains_as_a_sidecar(
     assert database.with_name(database.name + ".capture.lock").exists()
 
 
-def test_desktop_cli_wires_explicit_adapters_and_database(
+def test_technical_cli_wires_explicit_adapters_and_database(
     database: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -327,7 +346,6 @@ def test_desktop_cli_wires_explicit_adapters_and_database(
     assert (
         capture_save_probe.main(
             [
-                "--desktop",
                 "--db",
                 str(database),
                 "INTER",

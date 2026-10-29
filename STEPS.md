@@ -811,6 +811,197 @@ Sin cambios en dominio, SQLite ni fuentes de captura; sin gestión de trabajos,
 daemon ni commits. Instrucciones y recuperación en
 [README.md](README.md#gestión-dinámica-de-las-combinaciones-de-gnome).
 
+## Ampliación acotada: gestión de trabajos (Prompt 013)
+
+El roadmap original no incluía gestión de proyectos/trabajos explícita. Esta
+ampliación solicitada incorpora solo organización, configuración y selección,
+sin adelantar la Fase 3 ni la interfaz de revisión de Fase 4. La Fase 5 conserva
+su alcance futuro de robustez general.
+
+**Arquitectura:** `CorrectionJob` identifica cada audiolibro (UUID, título,
+carpeta y fecha UTC). `JobStore` implementa catálogo local, configuración XDG y
+resolución del destino; `jobs_cli` ofrece gestión sin GUI. Una SQLite versión 1
+por UUID mantiene aislamiento sin cambiar `Incident`, migrar tablas o duplicar
+`capture_and_save_incident`. Cada carpeta contiene `job.json` portable y
+`incidencias.sqlite3`. Se admiten títulos repetidos sin colisión de carpetas.
+No se introduce estado editorial: selección y modo siguen siendo independientes.
+
+No hay raíz de trabajos por defecto: `jobs_cli configure RUTA` la establece
+explícitamente y la persiste junto con el UUID seleccionado en
+`$XDG_CONFIG_HOME/audiobook-qc/jobs.json` o `~/.config/audiobook-qc/jobs.json`.
+Cambiarla no mueve datos y limpia la selección; repetir la misma la conserva.
+Configuración/selección se escriben con reemplazo atómico y fsync. La carpeta
+se identifica por UUID completo, sin inferencia por título.
+
+`jobs_cli` permite configure/config/create/list/get/select/active/clear.
+`active` comprueba que metadatos/base sean válidos. `on` valida el destino antes
+de habilitar atajos; cada `--desktop` resuelve el trabajo de nuevo y abre SQLite
+con URI `mode=rw`, comprobando permisos, versión y columnas antes de leer las
+fuentes. Una prueba local confirmó que una base solo legible permite consultar
+el esquema; por eso se comprueban también los permisos de base y carpeta.
+No se crea ni inicializa una base durante la pulsación. La confirmación tras
+commit incluye título. Ausencia de selección, trabajo inválido, captura y
+persistencia tienen mensajes diferenciados. Los comandos técnicos `--db`
+siguen disponibles; en escritorio una ruta explícita solo se acepta si coincide
+con el trabajo seleccionado. Para alternar títulos hay que retirar --db de las
+entradas GNOME una sola vez; no se modifica automáticamente GSettings personal.
+
+**Concurrencia:** un flock exclusivo no bloqueante junto a la configuración
+coordina las mutaciones, selección, modo on y captura completa hasta el commit.
+La selección efectiva es la observada al adquirir ese bloqueo, no el instante
+físico de la tecla. Operaciones simultáneas se rechazan, sin cola ni cambio de
+destino durante una captura. Se conserva el bloqueo previo por base y todas las
+protecciones de foco/modo/notificaciones. off no cancela una captura ya iniciada.
+Una selección perdida mientras el modo sigue activo rechaza nuevas capturas.
+
+**Criterios de salida:** dos trabajos coexistiendo con bases distintas; captura
+de escritorio usando exclusivamente el destino seleccionado; rechazos antes de
+captura ante ausencia de selección/base/esquema; persistencia entre procesos;
+cambio/activación/capturas simultáneas sin mezcla; precisión intacta; suite,
+lint y formato correctos. **Criterios automatizados verificados:** 424 tests
+superados (376 previos adaptados al destino seleccionado y 48 nuevos),
+`ruff check .` y `ruff format --check .` correctos. Tests con fuentes y GNOME
+sustituidos, SQLite real y configuración temporal aislada.
+No se considera realizada una prueba física de esta ampliación por conservar
+las pruebas históricas de Fase 2.
+
+**Limitaciones y recuperación:** filesystem local con flock y reemplazo atómico;
+misma configuración entre procesos; no coordina escritores técnicos o cambios
+manuales de archivos durante captura. No se certifica NFS ni almacenamiento
+sin locks fiables. Los títulos no verifican el audio/PDF abierto: el corrector
+debe cambiar recursos y consultar active. Sin importación automática, eliminación,
+estados editoriales, GUI o Excel. Una creación interrumpida puede dejar una
+carpeta incompleta que se rechaza; conservarla y apartarla manualmente con modo
+apagado. Para copias, esperar operaciones y copiar la carpeta completa; para
+recuperar, restaurar datos conocidos, seleccionar y validar antes de on. JSON
+corrupto no se sobrescribe automáticamente. No se usan rutas personales ni /tmp
+como destino predeterminado. Los tests sí usan bases y configuración temporales.
+
+**Integración adicional ejecutada:** CLI en procesos separados para configurar,
+crear A/B, seleccionar A → B → A, capturar y recuperar cada ID. Resultado:
+«El partido» contiene TEXT #1 y OTRO #2; «La montaña mágica», INTER #1.
+Texto exacto (CR/LF, espacios, Unicode) y timestamp binary64 conservados.
+Pipeline y SQLite reales, fuentes/foco/notificación sustituidos; no se presenta
+como pulsación física. Evidencia y bases temporales conservadas en
+`/tmp/audiobook-qc-jobs-integration-5_z4qjyu/verification.json`.
+
+**Validación física posterior:** el usuario confirma que las capturas quedaron
+separadas entre trabajos y que los siete comandos GNOME ya no incluyen --db.
+Esta confirmación pertenece a la gestión de trabajos; no demuestra todavía la
+vinculación de fuentes de la ampliación siguiente. Se conserva el procedimiento
+de regresión en README. Sin commits.
+
+## Vinculación explícita de fuentes por trabajo
+
+**Problema:** las bases ya estaban aisladas, pero los comandos GNOME conservaban
+un socket mpv temporal y el descubrimiento Okular no identificaba el documento
+del trabajo. Esta ampliación limita la captura de escritorio a fuentes asociadas
+explícitamente; no implementa fases posteriores, GUI ni migraciones de Incident.
+
+**Arquitectura implementada:** `job_sources.py` compone adaptadores y configuración
+por trabajo en `sources.json`, separado de `CorrectionJob`, `Incident` y SQLite.
+Guarda ruta absoluta/canónica del PDF y lista ordenada de capítulos locales.
+`integrations/job_mpv.py` deriva el socket del UUID persistente bajo
+`$XDG_RUNTIME_DIR/audiobook-qc/<UUID>.sock`; no guarda sockets de prueba o PIDs.
+`integrations/document_binding.py` identifica vistas por documento, dueño único
+D-Bus y ruta de objeto. El dominio y el esquema SQLite siguen intactos.
+
+**CLI:** `jobs_cli set-pdf UUID RUTA`, `sources UUID`,
+`launch-mpv UUID [CAPITULOS...]`, `launch-okular UUID`. La primera preparación
+expresa los archivos; al retomar, launch-mpv sin capítulos reutiliza la instancia
+que responde o relanza con la lista persistida. Arranca pausado, con ventana e
+idle para conservar la instancia entre capítulos. Otra lista exige cerrar antes
+el mpv dedicado. No se restauran automáticamente capítulo/posición de una sesión
+anterior. Solo se aceptan archivos locales declarados, no playlists externas o
+URLs; archivos ajenos arrastrados al reproductor se rechazan en la captura.
+
+Solo el lanzamiento explícito puede retirar un socket propio sin servidor;
+no reemplaza archivos/enlaces, ni interfiere con instancias ordinarias de mpv.
+Un arranque sin socket termina exclusivamente el proceso que acaba de iniciar;
+los errores quedan en mpv.log dentro del trabajo. El runtime debe ser absoluto,
+la carpeta privada (0700) y la ruta IPC no exceder 107 bytes. La captura no crea
+sockets ni inicia aplicaciones. La configuración persistente no usa /tmp.
+
+**Okular:** se revisó la fuente de Okular 21.12.3: cada Part publica /okular,
+/okular2, etc. Se enumeran todos esos objetos, incluso dentro del mismo proceso,
+y se exige una única vista del PDF configurado. GetNameOwner fija la conexión;
+los alias del mismo dueño se deduplican. No se elige por foco, PID, orden ni por
+ser la primera instancia. Tras reabrir, el documento permite redescubrir dueño
+y objeto. Un PDF duplicado, servicio no inspeccionable o API desconocida rechaza
+la captura; no se ocultan errores que pudieran encubrir otra copia del PDF.
+
+**Integración:** `--desktop` rechaza --mpv-socket/--okular-service con mensaje de
+migración y resuelve sus fuentes dentro del mismo bloqueo que fija el trabajo.
+Se reutiliza capture_and_save_incident. La lectura mpv conserva una conexión y
+comprueba archivo antes y después de filename/path/time-pos/duration/pause.
+Okular comprueba documento antes/después de la página; tras capturar se revalida
+la identidad, unicidad, documento y página antes de add. Si una fuente falta o
+cambia, no hay escritura ni fallback a otras instancias. on valida fuentes
+antes de restaurar GNOME. Las CLI técnicas sin --desktop conservan sus opciones.
+Los atajos definitivos solo necesitan intérprete absoluto, módulo, --desktop y
+código. README incluye la generación exacta de sus siete comandos y migración
+manual respetando el journal; no se modifica GSettings real automáticamente.
+
+**Verificación:** la suite conserva los 424 tests anteriores y añade 52
+específicos (476 en total). Cobertura: A → B → A con fuentes y SQLite distintas,
+mpv ajeno ignorado, capítulos sucesivos y precisión binary64, socket caído,
+archivos no declarados, configuración persistente entre procesos, PDF duplicado,
+vistas del mismo proceso, dueño desaparecido, reapertura con otro objeto,
+cambios de documento/página antes del INSERT, ausencia de overrides GNOME,
+lanzamiento/reutilización y arranque fallido, conflictos de archivos runtime,
+socket obsoleto y permisos. La suite aísla XDG; no arranca aplicaciones gráficas
+ni usa preferencias personales. Una prueba de socket Unix temporal requiere
+salir del sandbox que bloquea bind. Resultado final: **476 tests superados**,
+`ruff check .`, `ruff format --check .` y `git diff --check` correctos.
+
+**Comprobación real limitada, 29 de octubre de 2026:** consulta de solo lectura
+al Okular ya abierto mediante el nuevo adaptador. El servicio observado exponía
+KBookmarkManager, okular y okularshell; solo okular es la vista de documento.
+Se resolvió su dueño único, /okular y página 60, verificando coincidencia con el
+documento comunicado. No se capturaron incidencias ni se abrieron ventanas o
+modificaron configuración/atajos. No equivale a una prueba física A/B completa.
+
+**Límites y criterio experimental pendiente:** no hay lectura D-Bus atómica de
+documento/página, ni snapshot atómico de las propiedades mpv. Las comprobaciones
+rechazan cambios observados; no certifican cambios de ida y vuelta entre lecturas.
+No navegar/cambiar documentos o capítulos mientras se registra. PRIMARY sigue
+siendo global y no demuestra origen/vigencia del texto; seleccionar la frase en
+el PDF asociado inmediatamente antes de pulsar. El filtro de foco autoriza, no
+elige fuentes. No se promete seguridad contra procesos maliciosos del mismo
+usuario que manipulen sockets/configuración. Metadatos de fuentes con rutas
+absolutas requieren reasociación si se mueven sus archivos.
+
+La prueba física A/B de esta ampliación queda pendiente. README contiene pasos
+con dos PDFs, dos mpv dedicados, otro mpv ajeno, A → B → A, capítulos, sockets
+caídos y PDF duplicado. Criterio: cada alta identifica el archivo/timestamp y
+PDF/página de su asociación, A/B permanecen separados y las ambigüedades no
+escriben; comprobar también notificaciones y restauración de teclas con off.
+No hay decisiones bloqueantes abiertas. Sin commits.
+
+### Ampliación pequeña: capítulos desde directorios
+
+`jobs_cli launch-mpv UUID [RUTAS...]` acepta archivos, directorios y mezclas.
+Cada carpeta se expande sin recursión a archivos con las extensiones de audio
+indicadas en README (sin distinguir mayúsculas). Orden natural determinista por
+nombre, con números comparados numéricamente y desempate por nombre original.
+Se conserva el orden de argumentos y se deduplica por ruta canónica, manteniendo
+la primera aparición. Una carpeta sin audios admitidos falla antes del lanzamiento
+y conserva la configuración anterior.
+
+`sources.json` guarda únicamente la lista concreta expandida; la comprobación de
+pertenencia del audio activo sigue usando esa lista. Relanzar sin argumentos no
+rescanea carpetas. Para incorporar capítulos nuevos hay que cerrar el mpv dedicado
+y volver a pasar la carpeta. La detección por extensión no certifica el contenido
+ni los codecs: mpv sigue comprobando la decodificación al abrir los archivos.
+
+Verificación: 11 tests nuevos sobre expansión, orden, carpetas vacías/sin audios,
+subcarpetas ignoradas, mezclas, alias/duplicados, persistencia, relanzamiento y
+rechazo de archivos que se añadieron después de guardar la asociación. Configuración
+y archivos temporales; lanzamiento sustituido, sin abrir el mpv real del usuario.
+Resultado: **487 tests superados**; `ruff check .`, `ruff format --check .` y
+`git diff --check` correctos. No se modifican dominio, esquema SQLite ni
+configuración GNOME. Sin commits.
+
 ## Fase 3: exportación a plantilla Excel corporativa
 
 **BLOQUEADA: no implementar hasta disponer de una muestra de la plantilla Excel

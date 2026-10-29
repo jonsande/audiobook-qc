@@ -50,7 +50,13 @@ class SessionBus:
     """Ejecuta consultas sin shell ni autoactivación de servicios."""
 
     def call(
-        self, service: str, path: str, interface: str, method: str, signature: str
+        self,
+        service: str,
+        path: str,
+        interface: str,
+        method: str,
+        signature: str,
+        *arguments: str,
     ) -> object:
         command = [
             "busctl",
@@ -64,6 +70,7 @@ class SessionBus:
             path,
             interface,
             method,
+            *arguments,
         ]
         try:
             result = subprocess.run(

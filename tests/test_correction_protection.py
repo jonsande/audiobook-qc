@@ -10,15 +10,23 @@ from audiobook_qc import capture_save_probe, correction_mode
 from audiobook_qc.captured_incident import CapturedIncident, IncidentType
 from audiobook_qc.desktop_policy import ActivationRejected, require_correction_context
 from audiobook_qc.integrations import focus
+from audiobook_qc.jobs import JobStore, job_database
 from audiobook_qc.sqlite_repository import SQLiteIncidentRepository
 
 
 @pytest.fixture
-def session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+def session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, isolated_desktop_sources
+) -> Path:
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+
+    store = JobStore()
+    store.configure(str(tmp_path / "trabajos"))
+    job = store.create("Prueba")
+    store.select(job.id)
 
     # Esta suite aísla el indicador runtime; GNOME se prueba con un backend falso.
     class FlagController:
@@ -399,9 +407,7 @@ def test_active_mode_and_allowed_focus_preserve_integrated_capture_and_save(
     monkeypatch: pytest.MonkeyPatch,
     application: str,
 ) -> None:
-    database = session / "allowed.sqlite3"
-    with SQLiteIncidentRepository(database) as repository:
-        repository.initialize()
+    database = job_database(JobStore().active())
     correction_mode.set_active(True)
     monkeypatch.setattr(capture_save_probe, "active_application", lambda: application)
     captured = CapturedIncident(

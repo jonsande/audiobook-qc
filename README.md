@@ -11,8 +11,387 @@ escritorio la conecta a atajos personalizados de GNOME con notificaciones.
 reales en Okular y F6 también en mpv. La protección añadida exige modo de
 corrección activo y foco autorizado antes de capturar. Sin GUI propia.
 El modo controla también la reserva efectiva de los atajos propios de GNOME.
+La gestión de trabajos añade selección persistente y una SQLite independiente
+por audiolibro; los atajos requieren un trabajo seleccionado válido.
 El roadmap está en [STEPS.md](STEPS.md) y
 las reglas de desarrollo en [AGENTS.md](AGENTS.md).
+
+## Trabajos de corrección y almacenamiento configurable (Prompt 013)
+
+Cada trabajo representa un audiolibro y tiene UUID estable, título, fecha UTC y
+carpeta propia. Dos títulos iguales se admiten: las carpetas usan el UUID completo.
+El trabajo seleccionado es el destino de nuevos registros; el modo de corrección
+controla los atajos y sigue siendo independiente. No se añaden estados editoriales
+de finalización o archivado.
+
+No hay directorio de trabajos predeterminado: hay que configurarlo expresamente.
+La configuración y selección se guardan en
+`$XDG_CONFIG_HOME/audiobook-qc/jobs.json` (o `~/.config/audiobook-qc/jobs.json` si
+XDG no está definido o está vacío). XDG relativo se rechaza. La selección es
+compartida por los procesos del usuario que usan esa configuración, incluso entre
+displays; el modo conserva su alcance por sesión/display. Las rutas aceptan
+espacios y Unicode; la CLI expande `~` y guarda la raíz como ruta absoluta.
+
+```bash
+python -m audiobook_qc.jobs_cli configure "$HOME/Documentos/Correcciones audiolibros"
+python -m audiobook_qc.jobs_cli config
+python -m audiobook_qc.jobs_cli create "El partido"
+python -m audiobook_qc.jobs_cli create "La montaña mágica"
+python -m audiobook_qc.jobs_cli list
+# Copia los UUID completos devueltos por create o list:
+python -m audiobook_qc.jobs_cli get UUID_A
+python -m audiobook_qc.jobs_cli select UUID_A
+python -m audiobook_qc.jobs_cli active
+# Antes de on, asocia y abre las fuentes como se explica en la sección siguiente.
+python -m audiobook_qc.correction_mode on --notify
+# Para cambiar de audiolibro, sin modificar comandos GNOME:
+python -m audiobook_qc.jobs_cli select UUID_B
+python -m audiobook_qc.jobs_cli active
+# Para dejar de registrar y devolver las teclas a las aplicaciones:
+python -m audiobook_qc.correction_mode off --notify
+python -m audiobook_qc.jobs_cli clear
+```
+
+Los subcomandos de trabajos devuelven JSON y salida 0; los errores van a stderr
+con salida 1 (argumentos incorrectos: 2). `active` valida también la base y falla
+si no hay selección válida. `get` y `list` consultan los metadatos; no certifican
+que la base sea utilizable. Crear un trabajo inicializa explícitamente su base,
+pero no lo selecciona ni activa el modo. Organización real:
+
+```text
+<raíz configurada>/
+├── <UUID_A>/
+│   ├── job.json
+│   ├── incidencias.sqlite3
+│   └── incidencias.sqlite3.capture.lock  # después de la primera captura
+└── <UUID_B>/
+    ├── job.json
+    └── incidencias.sqlite3
+```
+
+`job.json` contiene versión, UUID, nombre y fecha; no incluye rutas absolutas.
+Una SQLite por trabajo conserva el esquema 1 y permite copiar o archivar la
+carpeta entera. No se modifica `Incident` ni se migran bases antiguas. Las CLI
+`incident_probe --db RUTA ...` y `capture_save_probe --db RUTA CODIGO` siguen
+sirviendo para diagnóstico fuera del modo escritorio.
+
+### Atajos y selección del destino
+
+Configura una sola vez las siete entradas de GNOME con este formato, cambiando
+el código final según F1–F7. Las fuentes se resuelven desde el trabajo activo:
+
+```text
+/RUTA/AL/PROYECTO/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop INTER
+```
+
+Retira `--db RUTA`, `--mpv-socket RUTA` y `--okular-service SERVICIO` de los
+comandos antiguos para que sigan la selección. El escritorio rechaza los overrides
+de fuentes; las CLI técnicas sin `--desktop` los conservan. Por
+compatibilidad, si se conserva, se exige que coincida con la base del trabajo
+seleccionado; nunca autoriza escribir en otro destino. Para editar comandos
+suspendidos: ejecuta `off`, cambia los comandos en GNOME y vuelve a asignar
+explícitamente sus combinaciones antes de `on`. La protección del journal de
+bindings rechaza cambios de comando suspendidos sin una nueva combinación;
+no edites `gnome-bindings.json` para eludirla. No se actualizan automáticamente
+los atajos reales ni la configuración personal durante la instalación o tests.
+
+`on` valida la selección y la base antes de restaurar bindings o activar el
+indicador. Cada captura mantiene modo/foco, notificaciones y exclusión previos;
+resuelve de nuevo la selección antes de consultar PRIMARY. Comprueba metadatos,
+comprueba permisos de base/carpeta, abre SQLite con `mode=rw` (exige archivo
+existente) y valida versión y columnas.
+Una pulsación no crea ni inicializa bases, ni hace fallback a una base anterior.
+Una selección borrada/inaccesible rechaza nuevas capturas aunque el modo siga
+marcado activo. `clear` no libera teclas: usa también `off` cuando corresponda.
+
+La confirmación se envía tras el commit e identifica el destino:
+`INTER registrada (#12) — El partido`. Los errores distinguen ausencia de
+selección, trabajo inválido/inaccesible, captura y persistencia. Un fallo del
+aviso posterior al commit no revierte ni repite el registro.
+
+### Concurrencia y recuperación
+
+`jobs.lock`, junto a la configuración, usa flock exclusivo no bloqueante.
+Coordina crear/configurar/seleccionar/deseleccionar, resolver el destino y `on`.
+La captura conserva el bloqueo desde la resolución hasta terminar el commit;
+usa además el bloqueo previo de su base. Si dos operaciones coinciden, una se
+rechaza sin esperar ni capturar contexto tardío. El destino es el seleccionado
+al adquirir ese bloqueo, no el instante físico de pulsación (GNOME puede tardar
+en iniciar el proceso). Nunca se cambia de destino a mitad del flujo. Reintenta
+un cambio rechazado y comprueba `active` antes de continuar. El aviso de éxito
+conserva el nombre del destino aunque la selección cambie después del commit.
+Los bloqueos se liberan al morir el proceso; no borres sus archivos.
+
+`configure NUEVA_RAIZ` es un cambio explícito: no mueve trabajos y borra la
+selección si cambia la raíz; repetir la misma ruta conserva la selección.
+Para recuperar la anterior, vuelve a configurarla y selecciona el UUID deseado.
+Si falta la carpeta o base, ejecuta `off`, restaura la carpeta completa desde una
+copia conocida, consulta `get`, selecciona y verifica `active` antes de `on`.
+No uses `init` sobre una base desaparecida para simular una recuperación.
+Si la configuración JSON está corrupta, conserva una copia y restaura una válida;
+no se sobrescribe silenciosamente. Una creación interrumpida puede dejar una
+carpeta UUID sin `job.json`: se rechaza y `list` señala la ruta problemática;
+apártala manualmente con el modo apagado y conserva sus datos para diagnóstico.
+No hay comando de eliminación o reparación automática.
+
+Para copias/traslados, apaga el modo y espera a que terminen operaciones técnicas;
+copia la carpeta completa (también archivos SQLite auxiliares si existen).
+Al cambiar de raíz tendrás que seleccionar otra vez el UUID. No se incluyen
+el audio o PDF originales. Las bases antiguas continúan consultables por `--db`;
+no se importan automáticamente al catálogo.
+
+Garantías limitadas a procesos que usan la misma configuración y bloqueo, sobre
+un sistema de archivos local con flock y reemplazo atómico. No se admite editar
+JSON, mover carpetas, sustituir bases o usar escritores técnicos durante la
+captura. Los enlaces simbólicos de carpetas de trabajo y bases se rechazan.
+La correspondencia de fuentes se valida con las asociaciones explícitas
+descritas en la sección siguiente; el título por sí solo no identifica archivos. Siguen los límites
+de PRIMARY, foco, repetición del teclado y lecturas consecutivas de las fuentes.
+No hay GUI, Excel, sincronización, borrado ni máquina de estados editorial.
+
+### Verificación y prueba manual preparada
+
+La suite usa configuración XDG aislada, dos trabajos con SQLite reales temporales
+y fuentes sustituidas; verifica capturas por escritorio, notificación tras commit,
+recuperación en procesos separados, precisión exacta y carreras entre procesos.
+No usa la configuración personal ni GSettings real. Resultado: **424 tests
+superados**, Ruff lint y formato correctos. La integración adicional por CLI
+en procesos separados dejó A con TEXT/OTRO y B con INTER, conservando datos
+exactos; evidencia en
+`/tmp/audiobook-qc-jobs-integration-5_z4qjyu/verification.json` (datos temporales
+de prueba, fuentes simuladas). La comprobación del
+Prompt 013 fue confirmada físicamente por el usuario, incluyendo aislamiento
+entre trabajos y atajos sin --db. El procedimiento siguiente se conserva como
+regresión; la nueva vinculación de fuentes tiene su prueba física propia abajo:
+
+1. Configura una raíz persistente de prueba y crea/selecciona A y B como arriba.
+   Adapta los siete comandos una sola vez; comprueba `active` y activa el modo.
+2. Con A seleccionado, audio pausado y frase en Okular, pulsa F1–F7 una vez.
+   Verifica título A y código/ID en cada aviso. Consulta cada ID en otro proceso
+   con `incident_probe --db RUTA_A get ID` y contrasta los datos originales.
+3. Selecciona B, abre sus recursos y pulsa F6 en Okular y en mpv gráfico.
+   Verifica avisos B, A con siete registros y B con dos, sin mezcla. Vuelve a A
+   y comprueba que su siguiente ID es 8.
+4. Ejecuta `clear` con el modo activo: F6 debe rechazar sin escritura. `on`
+   también debe fallar. Selecciona un trabajo válido para continuar.
+5. Prueba un socket inexistente: error de captura sin alta. Ejecuta `off`,
+   aparta temporalmente la carpeta seleccionada, intenta `on`: debe fallar sin
+   restaurar teclas ni recrear carpeta/base. Restáurala, selecciona y verifica.
+6. Comprueba foco ajeno rechazado, `off` devolviendo las funciones locales y
+   `on` restaurando las combinaciones. Termina con `off` y `clear`.
+
+Criterio manual: recuentos y destinos exactos, datos conservados y teclas/foco
+con el comportamiento ya validado en Fase 2. Las pruebas físicas históricas
+posteriores en este documento se refieren al flujo anterior con base explícita.
+
+## Fuentes de captura asociadas al trabajo
+
+La SQLite de destino y las fuentes se resuelven ahora desde el mismo trabajo
+seleccionado, bajo su bloqueo. El PDF y la lista de capítulos se guardan en
+`<raíz>/<UUID>/sources.json`, separado de `job.json` y del dominio `Incident`:
+
+```json
+{"version": 1, "document": "/ruta/A.pdf", "audio_files": ["/ruta/A/01.mp3", "/ruta/A/02.mp3"]}
+```
+
+No se actualizan automáticamente trabajos antiguos: hay que asociar sus archivos.
+Las rutas locales se expanden y resuelven a absolutas; aceptan Unicode y espacios.
+El UUID del trabajo basta para reconstruir su socket:
+`$XDG_RUNTIME_DIR/audiobook-qc/<UUID>.sock`. Ese archivo es temporal; ni la
+identidad ni la configuración de fuentes dependen de `/tmp`. Se exige runtime
+absoluto y una ruta IPC de hasta 107 bytes; el lanzamiento exige directorio
+`audiobook-qc` privado (0700), y no reemplaza archivos o enlaces ajenos.
+
+### Primera preparación y vuelta a un trabajo
+
+Sustituye los UUID y las rutas por los del audiolibro. Los comandos nuevos operan
+sobre un UUID explícito para evitar preparar accidentalmente otro trabajo:
+
+```bash
+python -m audiobook_qc.jobs_cli select UUID_A
+python -m audiobook_qc.jobs_cli set-pdf UUID_A "/ruta/Libro A.pdf"
+python -m audiobook_qc.jobs_cli launch-mpv UUID_A "/ruta/A/01.mp3" "/ruta/A/02.mp3"
+python -m audiobook_qc.jobs_cli launch-okular UUID_A
+python -m audiobook_qc.jobs_cli sources UUID_A
+python -m audiobook_qc.correction_mode on --notify
+```
+
+`launch-mpv` acepta archivos individuales, uno o más directorios y mezclas:
+
+```bash
+python -m audiobook_qc.jobs_cli launch-mpv UUID_A "/ruta/A/audios/"
+python -m audiobook_qc.jobs_cli launch-mpv UUID_A "/ruta/introducción.mp3" "/ruta/A/audios/"
+```
+
+Conserva el orden de los argumentos. Cada carpeta aporta únicamente sus archivos
+inmediatos de audio, en orden natural por nombre (`capítulo 1`, `capítulo 2`,
+`capítulo 10`), independiente del orden de creación o de la configuración regional.
+El orden ignora mayúsculas; los empates se resuelven por el nombre original.
+No recorre subcarpetas: para incluir otra, pásala explícitamente como argumento.
+Deduplica por ruta canónica (también alias simbólicos), conservando la primera
+aparición. Los archivos individuales conservan su orden y compatibilidad previa.
+
+El filtro de carpetas reconoce las extensiones `.mp3`, `.m4a`, `.m4b`, `.aac`,
+`.flac`, `.wav`, `.ogg`, `.oga`, `.opus`, `.aif`, `.aiff` y `.wma`, sin distinguir
+mayúsculas. Ignora documentos, playlists y otros archivos. La detección es por
+extensión; mpv comprueba la decodificación al abrir. Una carpeta vacía, sin esas
+extensiones o con audios únicamente en subcarpetas produce un error claro, sin
+lanzar mpv ni sustituir la asociación guardada.
+
+Guarda en `sources.json` la lista final de archivos concretos, absolutos y sin
+duplicados, y valida el archivo activo contra esa lista. No guarda la carpeta
+como sustituto de los capítulos. Relanzar sin rutas utiliza esa lista sin volver
+a explorar la carpeta; si añades capítulos, cierra el mpv dedicado y vuelve a
+pasar la carpeta para actualizarla.
+
+Abre una ventana propia, inicialmente pausada, con la lista expandida; no hay
+que gestionar sockets manualmente.
+El proceso permanece abierto al terminar la lista (`--idle=yes`). Al cambiar
+entre capítulos desde mpv se registra el archivo actualmente cargado y su posición
+nativa, sin redondear. Se comprueba que el archivo no cambie durante las lecturas;
+un cambio observado rechaza el registro para que se repita con el audio pausado.
+
+Cada trabajo tiene un socket distinto. Otros mpv ordinarios no se descubren ni
+se consultan, aunque estén abiertos o tengan el foco. Tampoco se acepta un audio
+ajeno cargado manualmente en el mpv dedicado: su ruta debe estar entre los capítulos
+declarados. Si hay que cambiar la lista, cierra primero ese mpv y ejecuta de nuevo
+`launch-mpv UUID` con la carpeta o todos los capítulos deseados. Se admiten
+archivos locales y carpetas; no se expanden playlists externas ni URLs como
+lista declarada.
+
+Días después basta con:
+
+```bash
+python -m audiobook_qc.jobs_cli select UUID_A
+python -m audiobook_qc.jobs_cli launch-mpv UUID_A
+python -m audiobook_qc.jobs_cli launch-okular UUID_A
+python -m audiobook_qc.correction_mode on --notify
+```
+
+El primer comando de lanzamiento reutiliza la instancia si su socket responde;
+si está cerrada, la relanza con la lista guardada. No se restaura automáticamente
+el capítulo o timestamp anterior. Un socket sin servidor puede retirarse solo
+al lanzar explícitamente; una pulsación nunca lo borra ni inicia aplicaciones.
+Los errores de arranque de mpv quedan en `<trabajo>/mpv.log`. Si no publica el
+socket a tiempo, se cierra exclusivamente el proceso que acaba de lanzar.
+
+`launch-okular` reutiliza una vista única coincidente o solicita abrir el PDF
+configurado. `starting` significa que se pidió abrirlo; si `on` se ejecuta antes
+de que aparezca la vista, rechazará la activación y se puede repetir después.
+`sources UUID` muestra la asociación persistente y el socket reconstruido, sin
+certificar disponibilidad. Fuera de una sesión con runtime válido muestra el
+socket como `null`; no inventa otra ruta.
+
+Para pasar de A a B, prepara B de la misma forma y ejecuta `select UUID_B`.
+Si ambas fuentes siguen abiertas no hay que editar GNOME, cerrar A ni cambiar
+rutas. Para preparar archivos nuevos con tranquilidad usa primero `off`; el
+modo es independiente y `clear` no devuelve las teclas a las aplicaciones.
+
+### Identificación de Okular y límites reales
+
+La asociación persistente es la ruta exacta del documento, no un PID ni un nombre
+D-Bus que pueda quedar obsoleto. En cada captura se enumeran los servicios y sus
+objetos `/okular`, `/okular2`, etc.; se exige **una única vista** del PDF asociado,
+incluso si varias vistas comparten proceso. No se elige por foco, orden de apertura
+ni antigüedad. Se fija el dueño único D-Bus y la ruta del objeto durante el registro.
+Reabrir Okular puede cambiar ambos: se redescubren por la identidad del PDF.
+
+La fuente de [Okular 21.12.3](https://raw.githubusercontent.com/KDE/okular/v21.12.3/part/part.cpp)
+registra un objeto por parte del visor. La comprobación de solo lectura en el
+Okular abierto verificó la enumeración real y la lectura de su documento/página.
+Se valida la interfaz publicada; un servicio no inspeccionable, un PDF duplicado,
+una conexión cerrada o una API distinta provocan rechazo conservador. No se ignora
+un servicio inaccesible que pudiera contener otra copia del documento.
+
+Se lee documento antes y después de la página y se comprueba otra vez la vista,
+el documento y la página antes de guardar. Los cambios observados se rechazan.
+**D-Bus no ofrece aquí una captura atómica conjunta:** no navegues, cierres vistas
+ni cambies documentos durante el registro. Un cambio de ida y vuelta entre dos
+lecturas podría no detectarse; no se afirma una garantía transaccional del visor.
+PRIMARY sigue siendo global y puede conservar texto antiguo o de otra ventana:
+selecciona la frase en el PDF correcto inmediatamente antes de pulsar el atajo.
+La vinculación de vistas no certifica el origen/vigencia de ese texto.
+
+mpv también entrega propiedades consecutivas: las comprobaciones de archivo antes
+y después detectan cambios observados, pero no convierten las lecturas en una
+instantánea atómica. La fuente IPC y su lista se identifican explícitamente según
+el [protocolo documentado de mpv](https://mpv.io/manual/stable/#json-ipc).
+Las garantías cubren aplicaciones normales y operaciones coordinadas por la CLI;
+no son una frontera contra procesos del mismo usuario que manipulen intencionadamente
+los sockets privados o archivos de configuración.
+
+### Comandos GNOME tras la migración
+
+Conserva el intérprete absoluto instalado y deja únicamente `--desktop` y el código.
+Ejemplo exacto del formato para INTER (sustituye solo la ruta del intérprete):
+
+```text
+/RUTA/AL/PROYECTO/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop INTER
+```
+
+Repite con TEXT, PRON, DICC, RUID, RESP, INTER y OTRO para F1–F7. Retira de los
+comandos `--db`, `--mpv-socket` y `--okular-service` con sus valores. Para generar
+las siete líneas exactas con el intérprete del entorno actual, desde el venv:
+
+```bash
+python -c 'import shlex, sys; [print(shlex.join([sys.executable, "-m", "audiobook_qc.capture_save_probe", "--desktop", code])) for code in ("TEXT", "PRON", "DICC", "RUID", "RESP", "INTER", "OTRO")]'
+```
+
+Haz la edición manual con `off`, siguiendo la restauración de combinaciones del
+journal descrita arriba. El programa no migra GSettings automáticamente.
+Sin fuentes disponibles, `on` falla antes de restaurar bindings; si desaparecen
+con el modo ya activo, las nuevas pulsaciones fallan sin escritura ni fallback.
+La CLI técnica sin `--desktop` conserva `--db`, `--mpv-socket` y `--okular-service`.
+
+Verificación automatizada de esta ampliación: **476 tests superados** (52 nuevos),
+`ruff check .`, `ruff format --check .` y `git diff --check` correctos. Las pruebas
+de A/B usan SQLite real y dobles de fuentes; la comprobación D-Bus real fue
+solo de lectura sobre una vista ya abierta.
+
+### Prueba física de las nuevas fuentes (pendiente)
+
+Usa dos trabajos nuevos, A y B, en una raíz persistente de prueba. Anota sus UUID
+como `UUID_A` y `UUID_B`, y las bases devueltas por `jobs_cli get UUID` como `DB_A`
+y `DB_B`. En los comandos de abajo son variables shell con esos valores reales.
+
+```bash
+python -m audiobook_qc.correction_mode off
+python -m audiobook_qc.jobs_cli set-pdf "$UUID_A" "/ruta/A.pdf"
+python -m audiobook_qc.jobs_cli launch-mpv "$UUID_A" "/ruta/A/01.mp3" "/ruta/A/02.mp3"
+python -m audiobook_qc.jobs_cli launch-okular "$UUID_A"
+python -m audiobook_qc.jobs_cli set-pdf "$UUID_B" "/ruta/B.pdf"
+python -m audiobook_qc.jobs_cli launch-mpv "$UUID_B" "/ruta/B/01.mp3"
+python -m audiobook_qc.jobs_cli launch-okular "$UUID_B"
+python -m audiobook_qc.jobs_cli select "$UUID_A"
+python -m audiobook_qc.correction_mode on --notify
+```
+
+1. Migra antes las siete entradas GNOME como arriba; deja A y B abiertos.
+   En A, pausa el audio en una posición intermedia, elige página y selecciona
+   una frase de A.pdf. Pulsa F6 una vez: aviso de A con ID 1.
+   Recupera con `python -m audiobook_qc.incident_probe --db "$DB_A" get 1` y
+   contrasta archivo A/01, timestamp nativo, PDF A, página y texto.
+2. Ejecuta `python -m audiobook_qc.jobs_cli select "$UUID_B"`, prepara frase,
+   página y audio B pausado. Pulsa F6: B con ID 1. Recupera desde `"$DB_B"`
+   y confirma que nunca contiene datos de A.
+3. Vuelve con `select "$UUID_A"`. Abre además `mpv "/ruta/audio-ajeno.mp3"`
+   sin socket y déjalo reproduciendo. Vuelve a Okular A, selecciona su frase
+   y pulsa F6: A con ID 2, mismo audio/posición de A si sigue pausado, jamás
+   audio ajeno ni PDF/página B. A contiene dos incidencias y B una.
+4. Pasa al capítulo A/02 en el mpv dedicado, pausa en otra posición y captura:
+   A con ID 3 debe indicar A/02 y su timestamp, sin cambiar sockets ni GNOME.
+5. Cierra solo el mpv A y repite F6: error sin ID 4, sin consultar mpv B/ajeno.
+   `launch-mpv "$UUID_A"` debe reconstruir el mismo socket y permitir continuar.
+6. Abre una segunda vista de A.pdf: F6 debe informar ambigüedad y no guardar.
+   Cierra la copia. Cierra/reabre Okular A con `launch-okular "$UUID_A"` y
+   verifica que se recupera su documento aunque cambie el servicio/objeto.
+7. Comprueba rechazo con foco ajeno y termina con `correction_mode off`:
+   F1/F6/F7 recuperan sus funciones locales. No mezcles esta validación con
+   tests unitarios: requiere observar avisos y pulsaciones reales.
+
+Para contrastar el timestamp antes de capturar puedes consultar `mpv_probe
+--socket RUTA` usando exclusivamente la ruta mostrada por `sources UUID_A`.
+No se presupone que el nuevo lanzador restaure una posición de otra sesión.
 
 ## Flujo previsto
 
@@ -91,6 +470,10 @@ dependen de las aplicaciones instaladas.
 │       ├── capture_save_probe.py
 │       ├── captured_incident.py
 │       ├── correction_mode.py
+│       ├── correction_job.py
+│       ├── jobs.py
+│       ├── jobs_cli.py
+│       ├── job_sources.py
 │       ├── desktop_policy.py
 │       ├── diagnostics.py
 │       ├── incident.py
@@ -101,6 +484,8 @@ dependen de las aplicaciones instaladas.
 │       │   ├── focus.py
 │       │   ├── gnome_shortcuts.py
 │       │   ├── mpv.py
+│       │   ├── job_mpv.py
+│       │   ├── document_binding.py
 │       │   ├── notifications.py
 │       │   ├── okular.py
 │       │   └── selection.py
@@ -458,9 +843,10 @@ python -m audiobook_qc.capture_save_probe --db /tmp/audiobook-qc-capturas.sqlite
 python -m audiobook_qc.incident_probe --db /tmp/audiobook-qc-capturas.sqlite3 get 1
 ```
 
-`--db` es obligatorio, sin base global predeterminada. Las opciones de mpv y
-Okular tienen el mismo significado y valores predeterminados que en
-`capture_probe`. Se reutiliza la captura existente con el orden validar código
+`--db` es obligatorio en esta CLI técnica sin `--desktop`, sin base global
+predeterminada. El escritorio usa el trabajo seleccionado como se explica arriba.
+Las opciones de mpv y Okular tienen el mismo significado y valores
+predeterminados que en `capture_probe`. Se reutiliza la captura existente con el orden validar código
 → PRIMARY → Okular → mpv; siguen vigentes sus límites sobre procedencia del
 texto, varias vistas y lecturas no atómicas. No selecciones otro texto al
 preparar el comando.
@@ -519,13 +905,12 @@ y [notificaciones del escritorio](https://specifications.freedesktop.org/notific
 
 ### Preparación y configuración
 
-1. Usa una base dedicada en un directorio escribible e inicialízala explícitamente
-   con `python -m audiobook_qc.incident_probe --db /RUTA/BASE/incidencias.sqlite3 init`.
-   Ni el atajo ni `--desktop` crean el esquema.
-2. Abre mpv con `--input-ipc-server=/RUTA/mpv.sock` y audio con ruta absoluta.
-   Abre el PDF en Okular; obtén su servicio con `okular_probe --list-services`.
-   El servicio puede cambiar al reiniciar Okular. Con un solo servicio se puede
-   omitir la opción; con varios debe indicarse. Una ventana/documento por servicio.
+1. Configura el directorio principal, crea un trabajo y selecciónalo con
+   `jobs_cli` como se explica arriba. Crear inicializa su base una sola vez;
+   ni el atajo ni `--desktop` crean archivos SQLite o esquemas.
+2. Asocia el PDF con `jobs_cli set-pdf UUID RUTA` y lanza los capítulos mediante
+   `jobs_cli launch-mpv UUID RUTAS...` (archivos o carpetas); abre el PDF con `launch-okular UUID`.
+   Consulta la sección de fuentes para retomar o alternar entre trabajos.
 3. En Ubuntu/GNOME: **Configuración → Teclado → Ver y personalizar atajos →
    Atajos personalizados → +** (los rótulos pueden variar). Añade nombre,
    comando y combinación. No reemplaces los atajos existentes de otras tareas.
@@ -533,14 +918,14 @@ y [notificaciones del escritorio](https://specifications.freedesktop.org/notific
    las rutas absolutas y el servicio por los tuyos:
 
 ```text
-/RUTA/AL/PROYECTO/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop --db "/RUTA/BASE/incidencias.sqlite3" --mpv-socket "/RUTA/mpv.sock" --okular-service org.kde.okular-12345 INTER
+/RUTA/AL/PROYECTO/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop INTER
 ```
 
 No uses `~`, variables de shell, `source`, redirecciones ni `gnome-terminal` en
 ese campo. El intérprete es absoluto y el paquete debe estar instalado en ese
-entorno (`pip install -e '.[dev]'` durante desarrollo). `--desktop` exige rutas
-absolutas de base y socket para evitar depender del directorio de trabajo de
-GNOME. `xclip`, `busctl` y `notify-send` deben estar en el PATH de la sesión.
+entorno (`pip install -e '.[dev]'` durante desarrollo). `--desktop` resuelve
+base y fuentes desde el trabajo seleccionado; las rutas técnicas solo se usan
+sin esa opción. `xclip`, `busctl` y `notify-send` deben estar en el PATH de la sesión.
 
 La correspondencia inicial **aceptada y probada por el usuario**, tras
 informarle de los conflictos, es la siguiente. Se edita exclusivamente en GNOME:
@@ -587,11 +972,12 @@ Con mpv pausado manualmente, selecciona la frase en Okular sin Ctrl+C y pulsa
 el atajo **una vez**, manteniendo el foco en Okular. El texto sigue siendo
 obligatorio según las reglas ya existentes. No se introduce captura sin texto.
 No hay diálogo modal ni navegación automática. Tras guardar aparece
-`Incidencia guardada` con código e ID. Los fallos muestran `Incidencia no guardada`
-con su causa. Verifica que GNOME permita las notificaciones de audiobook-qc y
-que el modo No molestar no oculte la confirmación; el servidor decide su aspecto.
+`Incidencia guardada` con código, ID y nombre del trabajo. Los fallos muestran
+`Incidencia no guardada` con su causa. Verifica que GNOME permita los avisos de
+audiobook-qc y que No molestar no oculte la confirmación; el servidor decide
+su aspecto.
 
-Para validar, usa primero una base temporal y registra el recuento inicial.
+Para validar, crea trabajos de prueba y registra sus recuentos iniciales.
 Comprueba el código/ID del aviso y recupera la incidencia en otro proceso con
 `incident_probe --db RUTA get ID`. Contrasta archivo, posición decimal exacta,
 documento, página y texto, sin normalizarlos. Repite cambiando código/contexto y
@@ -656,9 +1042,9 @@ activación manual por atajos, con las limitaciones anteriores.
 
 ## Protección frente a activaciones involuntarias
 
-Los comandos `--desktop` exigen **modo de corrección activo y foco en Okular o
-en una ventana gráfica de mpv**. Con modo inactivo, otra aplicación, identidad
-ambigua, datos ausentes o error de consulta, la activación se rechaza antes de
+Los comandos `--desktop` exigen **trabajo seleccionado válido, modo de corrección
+activo y foco en Okular o en una ventana gráfica de mpv**. Con modo inactivo,
+otra aplicación, identidad ambigua, datos ausentes o error de consulta, la activación se rechaza antes de
 leer PRIMARY, abrir SQLite o crear su archivo de bloqueo. La CLI manual sin
 `--desktop` conserva su comportamiento explícito de prueba.
 
@@ -700,13 +1086,11 @@ datos de clientes X11; el filtro previene errores de uso, no constituye una
 frontera de seguridad frente a clientes maliciosos. Referencia:
 [ventana activa en EWMH](https://specifications.freedesktop.org/wm/latest/ar01s03.html).
 
-No se guardan PID ni ID de ventana. Al reabrir Okular o mpv se consultan sus
-nuevas identidades. En nuestros siete comandos se retiró únicamente el
-`--okular-service` fijado al PID anterior: el adaptador existente descubre el
-único servicio. Si hay varios, se rechaza la ambigüedad y hay que elegir el
-servicio explícitamente, actualizándolo si cambia. mpv debe abrirse siempre con
-el mismo socket IPC configurado; si no hay ventana gráfica o socket disponible,
-el intento se rechaza o falla sin guardar.
+No se guardan PID ni ID de ventana en la configuración de foco. La resolución
+actual de fuentes sigue las asociaciones del trabajo: socket derivado del UUID
+y vista Okular identificada por documento. La comprobación de foco autoriza la
+activación, sin elegir qué instancia consultar. Si falta una fuente o hay
+ambigüedad, el intento se rechaza sin guardar.
 
 **Con modo activo las teclas siguen siendo globales**: un rechazo por foco no
 las reenvía a Firefox, LibreOffice ni otras aplicaciones. Con modo inactivo,

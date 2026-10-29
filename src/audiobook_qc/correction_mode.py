@@ -7,8 +7,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+from audiobook_qc.integrations.activation import ActivationBusy
 from audiobook_qc.integrations.gnome_shortcuts import GSettingsShortcuts, ShortcutError
 from audiobook_qc.integrations.notifications import NotificationError, notify
+from audiobook_qc.job_sources import SourceError, prepare_job_sources
+from audiobook_qc.jobs import JobError, JobStore
 from audiobook_qc.shortcut_mode import BindingJournal, ShortcutMode
 
 
@@ -85,11 +88,21 @@ def main(argv: list[str] | None = None) -> int:
         controller = make_controller(journal)
         with journal.lock():
             if args.action == "on":
-                controller.on()
+                # La selección no puede cambiar entre validación y modo activo.
+                with JobStore().destination() as (job, _):
+                    prepare_job_sources(job)
+                    controller.on()
             elif args.action == "off":
                 controller.off()
             message, synchronized = controller.status(is_active())
-    except (ModeError, OSError, ShortcutError) as exc:
+    except (
+        ModeError,
+        OSError,
+        ShortcutError,
+        JobError,
+        SourceError,
+        ActivationBusy,
+    ) as exc:
         print(f"No se pudo controlar el modo de corrección: {exc}", file=sys.stderr)
         if args.notify:
             try:

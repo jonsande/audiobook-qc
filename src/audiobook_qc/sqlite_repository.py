@@ -119,8 +119,12 @@ class SQLiteIncidentRepository:
     Usar como context manager o llamar close(). Abrir no inicializa el esquema.
     """
 
-    def __init__(self, database: str | Path) -> None:
-        self._connection = sqlite3.connect(database)
+    def __init__(self, database: str | Path, *, existing: bool = False) -> None:
+        if existing:
+            uri = Path(database).resolve().as_uri() + "?mode=rw"
+            self._connection = sqlite3.connect(uri, uri=True)
+        else:
+            self._connection = sqlite3.connect(database)
         self._connection.row_factory = sqlite3.Row
 
     def __enter__(self) -> "SQLiteIncidentRepository":
@@ -134,6 +138,12 @@ class SQLiteIncidentRepository:
 
     def initialize(self) -> None:
         initialize_schema(self._connection)
+
+    def validate_schema(self) -> None:
+        """Valida versión y columnas antes de leer fuentes; no inicializa nada."""
+        self._ensure_schema()
+        fields = ", ".join(("id", "created_at", "updated_at", *_FIELDS))
+        self._connection.execute(f"SELECT {fields} FROM incidents LIMIT 0")
 
     def _ensure_schema(self) -> None:
         version = self._connection.execute("PRAGMA user_version").fetchone()[0]
