@@ -5,7 +5,12 @@ Requiere Python 3.10 o superior.
 
 Estado actual: **Fase 0 técnicamente completada y Fase 1 completada**, con modelo
 de dominio y persistencia SQLite. Una CLI adicional integra captura y guardado
-en una sola ejecución, validada con mpv, Okular y PRIMARY reales; sin GUI ni atajos.
+en una sola ejecución, validada con mpv, Okular y PRIMARY reales. El modo de
+escritorio la conecta a atajos personalizados de GNOME con notificaciones.
+**Fase 2 completada en este alcance**, con F1–F7 comprobados mediante pulsaciones
+reales en Okular y F6 también en mpv. La protección añadida exige modo de
+corrección activo y foco autorizado antes de capturar. Sin GUI propia.
+El modo controla también la reserva efectiva de los atajos propios de GNOME.
 El roadmap está en [STEPS.md](STEPS.md) y
 las reglas de desarrollo en [AGENTS.md](AGENTS.md).
 
@@ -85,22 +90,32 @@ dependen de las aplicaciones instaladas.
 │       ├── capture_probe.py
 │       ├── capture_save_probe.py
 │       ├── captured_incident.py
+│       ├── correction_mode.py
+│       ├── desktop_policy.py
 │       ├── diagnostics.py
 │       ├── incident.py
 │       ├── incident_probe.py
 │       ├── integrations/
 │       │   ├── __init__.py
+│       │   ├── activation.py
+│       │   ├── focus.py
+│       │   ├── gnome_shortcuts.py
 │       │   ├── mpv.py
+│       │   ├── notifications.py
 │       │   ├── okular.py
 │       │   └── selection.py
 │       ├── mpv_probe.py
 │       ├── okular_probe.py
 │       ├── selection_probe.py
+│       ├── shortcut_mode.py
 │       └── sqlite_repository.py
 └── tests/
     ├── test_capture.py
     ├── test_capture_and_save.py
+    ├── test_correction_protection.py
     ├── test_diagnostics.py
+    ├── test_desktop_activation.py
+    ├── test_gnome_shortcuts.py
     ├── test_incident.py
     ├── test_mpv.py
     ├── test_okular.py
@@ -367,7 +382,8 @@ sola ventana/documento por servicio. No cambies las fuentes durante la captura.
 
 `capture_probe` sigue siendo una prueba de integración de Fase 0 en memoria.
 Para capturar y guardar en una sola ejecución usa `capture_save_probe`, descrito
-abajo. No hay hotkeys, GUI ni Excel. La evidencia real de captura está en
+abajo. El modo de escritorio se configura en GNOME; no hay GUI propia ni Excel.
+La evidencia real de captura está en
 [STEPS.md](STEPS.md).
 
 ## Persistencia de prueba (Fase 1)
@@ -471,7 +487,8 @@ fallida no deja una incidencia parcial y no se reintenta automáticamente.
 
 Los tests verifican el flujo con fuentes en memoria y SQLite temporal real;
 no manipulan ventanas. Esta integración añade solo captura y guardado por
-ejecución manual. Quedan fuera atajos globales, daemon, GUI, edición interactiva,
+ejecución manual. El modo de escritorio descrito a continuación añade activación
+por atajos. Quedan fuera daemon, GUI propia, edición interactiva,
 catálogo definitivo de descripciones, Excel, sincronización, concurrencia
 avanzada, migraciones e instalador. No completa la Fase 2 de atajos.
 
@@ -483,3 +500,334 @@ socket mpv inexistente) no añadían registros parciales. El texto conserva el
 formato extraído del PDF, incluidos saltos, guiones y espacios; la ruta del
 audio se conserva relativa porque así la comunicó mpv. Los comandos, resultados
 y límites están en [STEPS.md](STEPS.md#validación-real-de-captura-y-persistencia-29-de-octubre-de-2026).
+
+## Activación mediante atajos de GNOME (Fase 2)
+
+Se utilizan los **atajos personalizados del escritorio**, que ejecutan un
+proceso breve por pulsación. No hay listener Python, daemon ni biblioteca nueva.
+GNOME detecta la combinación; el código se configura en el comando; la CLI
+exige modo activo y foco autorizado, compone los adaptadores y reutiliza
+`capture_and_save_incident`. La comunicación
+usa `notify-send` (libnotify), disponible en el entorno comprobado. El dominio
+desconoce tanto las teclas como las notificaciones y el bloqueo.
+
+Esta opción usa el mecanismo nativo ya disponible. Un listener residente de
+X11 exigiría gestionar eventos, conflictos y ciclo de vida; herramientas como
+xbindkeys/sxhkd añadirían otro proceso y configuración. No son necesarias para
+el alcance actual. Referencias: [atajos personalizados de GNOME](https://help.gnome.org/gnome-help/keyboard-shortcuts-set)
+y [notificaciones del escritorio](https://specifications.freedesktop.org/notification/latest/).
+
+### Preparación y configuración
+
+1. Usa una base dedicada en un directorio escribible e inicialízala explícitamente
+   con `python -m audiobook_qc.incident_probe --db /RUTA/BASE/incidencias.sqlite3 init`.
+   Ni el atajo ni `--desktop` crean el esquema.
+2. Abre mpv con `--input-ipc-server=/RUTA/mpv.sock` y audio con ruta absoluta.
+   Abre el PDF en Okular; obtén su servicio con `okular_probe --list-services`.
+   El servicio puede cambiar al reiniciar Okular. Con un solo servicio se puede
+   omitir la opción; con varios debe indicarse. Una ventana/documento por servicio.
+3. En Ubuntu/GNOME: **Configuración → Teclado → Ver y personalizar atajos →
+   Atajos personalizados → +** (los rótulos pueden variar). Añade nombre,
+   comando y combinación. No reemplaces los atajos existentes de otras tareas.
+4. En el campo Comando, pega lo siguiente en **una sola línea**, sustituyendo
+   las rutas absolutas y el servicio por los tuyos:
+
+```text
+/RUTA/AL/PROYECTO/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop --db "/RUTA/BASE/incidencias.sqlite3" --mpv-socket "/RUTA/mpv.sock" --okular-service org.kde.okular-12345 INTER
+```
+
+No uses `~`, variables de shell, `source`, redirecciones ni `gnome-terminal` en
+ese campo. El intérprete es absoluto y el paquete debe estar instalado en ese
+entorno (`pip install -e '.[dev]'` durante desarrollo). `--desktop` exige rutas
+absolutas de base y socket para evitar depender del directorio de trabajo de
+GNOME. `xclip`, `busctl` y `notify-send` deben estar en el PATH de la sesión.
+
+La correspondencia inicial **aceptada y probada por el usuario**, tras
+informarle de los conflictos, es la siguiente. Se edita exclusivamente en GNOME:
+
+| Tecla propuesta | Código en el comando |
+| --- | --- |
+| F1 | TEXT |
+| F2 | PRON |
+| F3 | DICC |
+| F4 | RUID |
+| F5 | RESP |
+| F6 | INTER |
+| F7 | OTRO |
+
+Crea una entrada por código cambiando el último argumento. El campo Combinación
+es independiente del campo Comando: se puede cambiar F6 por Shift+F6 sin cambiar
+el código INTER ni editar Python. También se puede asignar cualquier combinación
+libre al código que se necesite. No hay un mapa de teclas fijo en el código.
+
+**Conflictos detectados:** en los grupos de atajos de GNOME consultados no había
+F1–F7 ni Shift+F1–F7; el atajo personalizado existente era Ctrl+Alt+T. No se
+encontraron F1–F7 en los bindings predeterminados de mpv 0.34.1 ni en los scripts
+personales revisados; no había `input.conf` personal. Esto no garantiza ausencia
+de bindings dinámicos ni de extensiones de GNOME. Okular sí utiliza F1 (ayuda),
+F3 (siguiente búsqueda), F5 (recargar), F6 (anotaciones) y F7 (panel lateral).
+Shift+F1 (ayuda contextual) y Shift+F3 (búsqueda anterior) también tienen uso.
+Sus overrides locales consultados no anulaban estas teclas. Fuentes:
+[Okular 21.12.3](https://raw.githubusercontent.com/KDE/okular/v21.12.3/part/part.cpp),
+[anotaciones de Okular](https://docs.kde.org/stable_kf6/en/okular/okular/annotations.html),
+[atajos estándar KDE](https://api-staging.kde.org/kstandardshortcut.html) y
+[bindings mpv 0.34.1](https://github.com/mpv-player/mpv/blob/v0.34.1/etc/input.conf).
+
+F1–F7 se comprobaron con foco en Okular y F6 también con foco en mpv: el usuario
+confirmó los avisos correctos, sin funciones locales ni cambio de foco. Mientras
+estén activos, los atajos globales desplazan esas funciones de las aplicaciones.
+F1–F7 afectan a todas las aplicaciones de la sesión y facilitan pulsaciones
+accidentales. El usuario ha aceptado ese compromiso. Shift+F1–F7 es una alternativa
+editable, pero tampoco está libre de todos los conflictos y no se ha probado.
+
+### Uso y prueba manual
+
+Activa explícitamente el modo con `python -m audiobook_qc.correction_mode on --notify`.
+Con mpv pausado manualmente, selecciona la frase en Okular sin Ctrl+C y pulsa
+el atajo **una vez**, manteniendo el foco en Okular. El texto sigue siendo
+obligatorio según las reglas ya existentes. No se introduce captura sin texto.
+No hay diálogo modal ni navegación automática. Tras guardar aparece
+`Incidencia guardada` con código e ID. Los fallos muestran `Incidencia no guardada`
+con su causa. Verifica que GNOME permita las notificaciones de audiobook-qc y
+que el modo No molestar no oculte la confirmación; el servidor decide su aspecto.
+
+Para validar, usa primero una base temporal y registra el recuento inicial.
+Comprueba el código/ID del aviso y recupera la incidencia en otro proceso con
+`incident_probe --db RUTA get ID`. Contrasta archivo, posición decimal exacta,
+documento, página y texto, sin normalizarlos. Repite cambiando código/contexto y
+comprueba que cada pulsación completada produce exactamente una alta. Verifica
+con foco en Okular y en mpv que no se abre ayuda ni se ejecutan sus funciones
+locales. Prueba también mantener la tecla: la repetición de GNOME no se presupone
+desactivada. Para fallos, configura temporalmente un socket inexistente: debe
+aparecer el error y conservarse el recuento. Restaura el comando al terminar.
+
+El modo `--desktop` crea `BASE.sqlite3.capture.lock` al lado de la base y usa
+`flock` no bloqueante durante captura y guardado. Una activación solapada de
+cualquier código para la misma base se **omite**, sin cola ni lectura tardía,
+con aviso `Activación omitida`. El archivo queda, pero el bloqueo se libera al
+terminar o morir el proceso; no lo borres mientras haya capturas. Este mecanismo
+solo coordina procesos con `--desktop`; no coordina la CLI sin esa opción ni
+otros escritores. Requiere un sistema de archivos local con soporte de flock.
+
+Una activación posterior a la finalización crea una incidencia nueva, aunque
+el contexto sea idéntico. No hay cooldown, deduplicación editorial ni garantía
+contra repetición del teclado: no mantener la tecla ni repetir por ausencia de
+aviso sin consultar la base. Si `notify-send` falla **después** de guardar, se
+mantienen el éxito (salida 0) y el JSON con ID; stderr indica que quedó guardada
+pero falló el aviso. No se reintenta el INSERT. Sin servicio de notificaciones,
+el stderr puede quedar solo en el registro de la sesión: validar los avisos antes
+del uso continuo. La selección PRIMARY sigue siendo global y puede estar obsoleta.
+
+### Personalización y desactivación
+
+En Atajos personalizados, edita la combinación sin tocar el comando para
+conservar el código; edita el argumento final para cambiar el código asociado.
+Para desactivar una entrada, borra su combinación (Retroceso en el diálogo de
+asignación); para eliminarla, usa Quitar. Repite para las siete entradas si
+quieres recuperar todas las teclas. No hay servicio que detener ni base que borrar.
+El cambio de atajos no cancela una captura ya iniciada. `correction_mode off`
+impide registros y vacía las combinaciones propias; conserva las entradas y
+comandos para restaurarlas con `on`. Véase la gestión dinámica al final.
+
+**Verificación automática:** 285 tests superados (23 nuevos) y Ruff correcto.
+Se prueban los siete códigos, reutilización del caso de uso, datos y precisión,
+fallos de captura/SQLite, notificación tras commit, error de notificación tras
+éxito, esquema explícito, rutas absolutas, activaciones consecutivas y exclusión
+entre procesos, sin pulsaciones ni escritorio. El envío de un aviso de prueba
+real terminó correctamente. Se han registrado y releído las siete entradas
+F1–F7 en GNOME, conservando Ctrl+Alt+T, con comandos
+explícitos hacia la base temporal `/tmp/audiobook-qc-hotkeys-gzl2v_os/incidencias.sqlite3`,
+socket `/tmp/audiobook-qc-real-mjz7z4xb/mpv.sock` y servicio
+`org.kde.okular-406490`. El plan y la copia de la lista de atajos anterior están
+en ese directorio temporal. No convertir estas rutas de prueba en configuración
+permanente: desaparecen con la limpieza de `/tmp`.
+
+**Validación real completada el 29 de octubre de 2026:** el usuario pulsó F1–F7
+con foco en Okular y F6 tres veces más al continuar la prueba con mpv. Confirmó
+avisos `Incidencia guardada` con código e ID incremental, sin acciones locales
+ni cambio de foco. Se recuperaron en procesos independientes las diez incidencias
+(ID 1–7 en el orden de la tabla, ID 8–10 INTER), conservando todos los datos de
+captura, posición 19.300243 y su binary64 exacto. No hubo duplicados en estas
+pulsaciones separadas; mantener una tecla no se ha probado. Un intento de CLI
+real con `--desktop` y socket inexistente devolvió error, envió la notificación
+sin error de transporte y mantuvo la base con diez registros; la visibilidad
+del aviso de error no fue confirmada por el usuario. Fase 2 completada para
+activación manual por atajos, con las limitaciones anteriores.
+
+## Protección frente a activaciones involuntarias
+
+Los comandos `--desktop` exigen **modo de corrección activo y foco en Okular o
+en una ventana gráfica de mpv**. Con modo inactivo, otra aplicación, identidad
+ambigua, datos ausentes o error de consulta, la activación se rechaza antes de
+leer PRIMARY, abrir SQLite o crear su archivo de bloqueo. La CLI manual sin
+`--desktop` conserva su comportamiento explícito de prueba.
+
+Sin indicador runtime, el modo empieza **inactivo**. Los comandos comprueban
+también la sincronización con GNOME y usan la copia persistente descrita abajo.
+Se controla desde el entorno virtual del proyecto:
+
+```bash
+python -m audiobook_qc.correction_mode status
+python -m audiobook_qc.correction_mode on --notify
+python -m audiobook_qc.correction_mode off --notify
+```
+
+Para controlarlo sin terminal puedes crear atajos personalizados adicionales
+con el intérprete absoluto, `-m audiobook_qc.correction_mode` y `on --notify`,
+`off --notify` o `status --notify`. Escoge combinaciones libres; no se han
+asignado nuevas teclas de control ni cambiado otras preferencias personales.
+
+El estado es un pequeño archivo atómico bajo
+`$XDG_RUNTIME_DIR/audiobook-qc/correction-<identificador-del-display>.active`.
+Es compartido entre procesos del mismo usuario/display y no pertenece a la base
+de incidencias. Se mantiene hasta `off` o la limpieza del directorio runtime;
+no se promete reiniciarlo en cada reapertura de una aplicación ni en un logout
+si el runtime del usuario sigue existiendo. Un estado ilegible o corrupto
+rechaza activaciones, sin suponer que está activo. `off` elimina el estado y
+permite recuperarse de un contenido corrupto. El modo no cancela capturas que
+ya habían superado la comprobación.
+
+El adaptador consulta `_NET_ACTIVE_WINDOW` mediante `xprop`, después WM_CLASS y
+`_NET_WM_PID`, y contrasta el ejecutable real en `/proc/PID/exe`. Solo admite
+las identidades verificadas `okular/okular/okular`, `gl/mpv/mpv` y
+`mpv/mpv/mpv` (instancia/clase/binario). No busca aplicaciones abiertas ni usa
+el título, por lo que un terminal que ejecuta mpv sigue siendo una terminal y
+se rechaza. Vuelve a leer la ventana activa y rechaza cambios durante la
+identificación. Requiere `xprop`, DISPLAY y sesión declarada X11; no se añade
+una dependencia Python ni soporte Wayland. La lectura de foco y captura sigue
+sin ser atómica: no cambiar de ventana durante el registro. WM_CLASS/PID son
+datos de clientes X11; el filtro previene errores de uso, no constituye una
+frontera de seguridad frente a clientes maliciosos. Referencia:
+[ventana activa en EWMH](https://specifications.freedesktop.org/wm/latest/ar01s03.html).
+
+No se guardan PID ni ID de ventana. Al reabrir Okular o mpv se consultan sus
+nuevas identidades. En nuestros siete comandos se retiró únicamente el
+`--okular-service` fijado al PID anterior: el adaptador existente descubre el
+único servicio. Si hay varios, se rechaza la ambigüedad y hay que elegir el
+servicio explícitamente, actualizándolo si cambia. mpv debe abrirse siempre con
+el mismo socket IPC configurado; si no hay ventana gráfica o socket disponible,
+el intento se rechaza o falla sin guardar.
+
+**Con modo activo las teclas siguen siendo globales**: un rechazo por foco no
+las reenvía a Firefox, LibreOffice ni otras aplicaciones. Con modo inactivo,
+la gestión dinámica descrita abajo vacía `binding` y libera efectivamente las
+teclas. No se habilitan/deshabilitan automáticamente al cambiar de aplicación.
+
+Validación del 29 de octubre de 2026:
+
+1. Modo inicialmente inactivo: F6 en Okular y en otra aplicación fue rechazado;
+   el usuario confirmó ambos avisos y la base permaneció en 11 registros.
+2. Activación explícita: F6 en Okular y en mpv gráfico guardó ID 12 y 13;
+   F6 en terminal y navegador/LibreOffice fue rechazado según confirmó el usuario.
+   Se recuperaron las dos altas en otros procesos, con los datos intactos, y el
+   recuento quedó en 13.
+3. Desactivación explícita: F6 en Okular volvió a rechazarse, confirmado por el
+   usuario; se dejó el modo inactivo como estado final.
+
+**338 tests superados** (53 nuevos), Ruff lint y formato correctos. Los tests
+de foco y modo no usan escritorio real: cubren identidades autorizadas y ajenas,
+ausencias, cambios de foco, PID no verificable, reinicio de aplicación, errores,
+modo inicial/activo/inactivo/corrupto, persistencia entre procesos, separación de
+display, orden del filtro y ausencia de captura/apertura de SQLite/bloqueo en
+rechazos. Dominio, repositorio, caso de uso y adaptadores de captura sin cambios.
+
+## Gestión dinámica de las combinaciones de GNOME
+
+Los mismos comandos `correction_mode on|off|status` gestionan ahora el modo y
+los bindings. No hay daemon ni cambio en incidencias, SQLite o captura.
+
+- **off:** desactiva primero el indicador de captura, guarda las combinaciones
+  y vacía solo `binding` de las entradas propias. Repite la operación sin perder
+  la copia. Intenta liberar todas las entradas aunque alguna falle y comunica
+  cualquier fallo parcial, sin anunciar una sincronización satisfactoria.
+- **on:** mantiene el modo inactivo durante la restauración y verificación.
+  No lo declara activo hasta confirmar las combinaciones necesarias. Ante un
+  fallo intenta dejarlas liberadas y comunica si la recuperación fue parcial.
+- **status:** informa del modo y de si los atajos están sincronizados. Devuelve
+  salida 1 si detecta discrepancias o errores, sin modificar los bindings.
+
+El descubrimiento lee `custom-keybindings` y reconoce el comando directo
+`python[versión] -m audiobook_qc.capture_save_probe ... --desktop ...`. No usa
+índices fijos, nombres visibles ni la combinación F1–F7 como identificación.
+Los comandos con wrappers/shell no se gestionan: usa el comando directo mostrado
+en configuración. Solo se escribe la propiedad `binding`; ni la lista de
+entradas, ni los nombres ni los comandos se modifican. Se vuelve a leer cada
+entrada antes de escribir y después para detectar cambios concurrentes.
+
+La copia versionada vive en
+`$XDG_STATE_HOME/audiobook-qc/gnome-bindings.json` o, por defecto,
+`~/.local/state/audiobook-qc/gnome-bindings.json`. No está bajo `/tmp` ni en
+SQLite. Se guarda atómicamente antes de suspender cada combinación, con fsync,
+y se conserva después de restaurar. Un bloqueo entre comandos evita que on/off
+solapados se pisen. No borres la copia mientras las combinaciones estén vacías.
+
+### Personalización sin perder cambios
+
+Cambia las teclas en los Atajos personalizados de GNOME: no hay un mapa fijo
+en Python. Una nueva combinación no vacía tiene prioridad sobre la copia
+anterior. Si la asignas mientras el modo está inactivo, GNOME la reserva de
+inmediato; ejecuta `off` para guardarla y liberarla, y `on` para usarla después.
+Una combinación borrada manualmente mientras estaba habilitada no se restaura.
+Para deshabilitar permanentemente una entrada, bórrala mientras el modo esté
+activo y luego ejecuta `off`, o elimina esa entrada desde GNOME.
+
+Hay un límite observable: borrar otra vez una combinación que el programa ya
+dejó vacía no cambia GSettings y no permite distinguir una nueva intención
+manual de la suspensión temporal. Usa el procedimiento anterior para ese caso.
+Si cambias el comando de una entrada suspendida, no se restaura su combinación
+antigua sin más: asigna explícitamente la combinación al nuevo comando en GNOME.
+Si una entrada desaparece o pasa a ejecutar otra aplicación, no se recrea ni se
+escribe. También se rechazan duplicados propios y conflictos exactos con otras
+entradas personalizadas. No edites las entradas mientras se ejecuta on/off:
+GSettings no proporciona compare-and-swap frente al editor externo; las
+relecturas reducen la carrera pero no crean una transacción global.
+
+### Recuperación y arranque
+
+GSettings es persistente y no ofrece una transacción que incluya nuestro archivo
+de modo. Una interrupción puede dejar combinaciones parcialmente reservadas,
+aunque la captura ya esté desactivada. `status` detecta ese desacuerdo y `off`
+vuelve a intentar liberar las entradas. La copia persistente conserva las
+combinaciones incluso si se limpia el runtime o se reinicia el equipo.
+
+Tras reiniciar normalmente falta el indicador runtime y la captura empieza
+inactiva, pero GNOME puede conservar los bindings que tenía al interrumpirse.
+Ejecuta `off` al entrar para sincronizar. Si quieres automatizarlo sin daemon,
+añade a **Aplicaciones al inicio** el comando absoluto
+`/RUTA/PROYECTO/.venv/bin/python -m audiobook_qc.correction_mode off`.
+No se ha instalado una entrada de autoinicio ni se afirma haber probado un
+logout o reinicio real. Si el runtime persiste tras cerrar sesión, también puede
+persistir el indicador: `off` explícito al entrar sigue siendo la recuperación
+recomendada. Cerrar aplicaciones no cambia el modo.
+
+Si falla GSettings, corrige el acceso a la sesión y repite `off`. Si se pierde
+o corrompe la copia, no se inventan combinaciones: una copia corrupta no se
+sobrescribe, `off` prioriza liberar teclas y comunica valores observados para
+recuperación manual. Conserva el archivo dañado, restaura una copia válida o
+renómbralo y vuelve a asignar las combinaciones en GNOME antes de ejecutar
+`off` y `on`. Con disco no escribible tampoco puede garantizarse guardar una
+copia nueva; el error indica qué valores requieren anotarse manualmente.
+Como último recurso, deshabilita las combinaciones propias en GNOME. No uses
+`gsettings reset-recursively` ni reemplaces toda la lista de atajos.
+
+Las lecturas confirmadas de GSettings no demuestran por sí solas la captura de
+las teclas por GNOME. En esta versión (GNOME Shell **42.9**, Ubuntu 22.04/X11)
+se verificó con el usuario que `binding=''` devuelve F1 a la ayuda de Okular sin
+ejecutar audiobook-qc; al suspender las siete combinaciones también confirmó
+las funciones locales de F6/F7. La configuración ajena se compara íntegramente
+antes/después. Las pruebas unitarias de la gestión nunca ejecutan GSettings
+real: usan un backend en memoria y archivos temporales.
+
+Validación completa: tras reabrir mpv con su socket IPC, F1–F7 en Okular y F6
+en mpv generaron ocho avisos y ocho registros (ID 14–21), recuperados en procesos
+independientes. Esta ronda seleccionó una frase de la página 20 y posición
+19.3 s, conservadas exactamente. Se verificaron on/off repetidos y la igualdad
+de nombres, comandos, lista de entradas y todas las propiedades ajenas antes y
+después. Estado final: **modo inactivo, atajos sincronizados y siete bindings
+vacíos**, con su copia persistente guardada. Evidencias temporales en
+`/tmp/audiobook-qc-dynamic-psdmalgy`.
+
+**376 tests superados** (38 nuevos), Ruff lint y formato correctos. Incluyen
+fallos parciales y recuperación simulada de interrupciones/reinicio, sin tocar
+el escritorio real desde los tests. No se ha probado un reinicio/logout real.
+No se han hecho commits.
