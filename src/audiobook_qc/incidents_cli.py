@@ -8,6 +8,7 @@ from dataclasses import asdict
 
 from audiobook_qc.audio_position import format_audio_position
 from audiobook_qc.captured_incident import IncidentType
+from audiobook_qc.description_config import load_catalog
 from audiobook_qc.incident import Incident
 from audiobook_qc.incident_review import EDITABLE_FIELDS, edit_incident, get_incident
 from audiobook_qc.integrations.activation import ActivationBusy
@@ -143,6 +144,8 @@ def _parser() -> argparse.ArgumentParser:
         ),
     ):
         group = edit.add_mutually_exclusive_group()
+        if field == "generic_description":
+            group.add_argument("--generic-description-id", default=argparse.SUPPRESS)
         group.add_argument(
             *options,
             dest=field,
@@ -166,7 +169,8 @@ def main(argv: list[str] | None = None) -> int:
     changes = {
         key: value for key, value in vars(args).items() if key in EDITABLE_FIELDS
     }
-    if args.action == "edit" and not changes:
+    description_id = getattr(args, "generic_description_id", None)
+    if args.action == "edit" and not changes and description_id is None:
         parser.error("Indica al menos un campo editable.")
     try:
         with JobStore().destination(getattr(args, "job", None)) as (job, repository):
@@ -177,7 +181,13 @@ def main(argv: list[str] | None = None) -> int:
                 ]
             else:
                 incident = (
-                    edit_incident(repository, args.id, changes)
+                    edit_incident(
+                        repository,
+                        args.id,
+                        changes,
+                        catalog=load_catalog() if description_id is not None else None,
+                        description_id=description_id,
+                    )
                     if args.action == "edit"
                     else get_incident(repository, args.id)
                 )

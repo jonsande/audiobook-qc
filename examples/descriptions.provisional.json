@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "descriptions": [
+    {
+      "id": "ejemplo_pron_provisional",
+      "text": "Ejemplo provisional: revisar pronunciación.",
+      "incident_types": ["PRON"]
+    }
+  ]
+}

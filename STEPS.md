@@ -1077,6 +1077,84 @@ historial/deshacer, operaciones de exported, búsqueda avanzada ni edición de l
 identidad de audio. La regla implementada solo expresa preparación editorial
 mínima, sin declarar listas para una plantilla desconocida las demás propiedades.
 
+## Catálogo configurable de descripciones genéricas
+
+**Alcance verificado el 30 de octubre de 2026:** ampliación pequeña de revisión,
+sin GUI ni exportación. El catálogo editorial real sigue pendiente de acuerdo.
+No hay migración SQLite, dependencias nuevas ni cambios de GNOME. Sin commits.
+
+**Arquitectura:** `descriptions.py` define entradas y catálogo inmutables, IDs
+estables, filtrado ordenado y resolución por tipo, sin archivos/SQLite/UI.
+`description_config.py` es el adaptador de lectura estricta JSON UTF-8 versionado:
+`$XDG_CONFIG_HOME/audiobook-qc/descriptions.json`, con fallback a
+`~/.config/audiobook-qc/descriptions.json` para variable ausente/vacía. Se rechaza
+XDG relativo. Cada entrada declara id, text e incident_types; el array conserva
+orden y admite varias/una/ninguna por tipo y frases compartidas. No se instala
+automáticamente. `examples/descriptions.provisional.json` demuestra una sola frase
+PRON explícitamente provisional. README explica instalación manual sin sobrescribir
+y catálogo vacío. El archivo de usuario se modifica sin tocar Python.
+
+**Validación y CLI:** se rechazan estructuras/versiones/claves incorrectas,
+claves JSON repetidas, IDs duplicados o inválidos, texto ausente/vacío/sin contenido,
+tipos desconocidos, asociaciones vacías/duplicadas y UTF-8/JSON corruptos. Archivo
+ausente también es error claro con ruta, sin fallback ni escritura. `descriptions_cli
+list [TIPO]` y `validate` tienen presentación humana y `--json` antes/después del
+subcomando. Consulta no requiere trabajo ni toma el bloqueo de captura.
+
+**Asignación:** `incidents_cli edit ID --generic-description-id IDENTIFICADOR`
+admite trabajo activo y `--job UUID`. `edit_incident` recibe catálogo validado,
+resuelve ID contra el tipo resultante y copia exactamente el texto antes de update.
+No guarda referencia: las modificaciones/bajas posteriores del catálogo nunca
+cambian el historial. Comentario, exported y campos no editados quedan intactos;
+updated_at cambia solo si hay modificación efectiva. El ID excluye opciones de
+texto manual/clear. La edición libre sigue permitida sin pertenencia al catálogo.
+Completitud y composición editorial conservan las reglas anteriores.
+
+**Política explícita ante cambio de tipo:** no hay procedencia persistida y el
+catálogo puede cambiar, por lo que comparar textos actuales no identifica una
+selección histórica con fiabilidad. Se rechaza conservadoramente cambiar el tipo
+si conserva una descripción efectiva, incluso manual/retirada del catálogo.
+Hay que eliminarla o reemplazarla antes o en la misma edición. Un nuevo ID se
+valida contra el tipo final; permite confirmar explícitamente una frase compartida
+incluso si el texto permanece igual. Una sustitución manual distinta constituye
+una decisión editorial explícita. No se borra información automáticamente. Leer
+incidencias históricas no las invalida ni requiere catálogo.
+
+**Concurrencia y aislamiento:** se reutiliza JobStore.destination/flock desde
+resolución de trabajo hasta lectura, validación y commit. Captura simultánea,
+otra edición y selección de trabajo se rechazan; UUID explícito no cambia activo.
+Se usa una sola instantánea validada del catálogo por asignación. No hay nuevo
+bloqueo global: captura F1–F7, consulta de incidencias y edición manual no cargan
+el catálogo y funcionan aunque esté corrupto. Editores externos del JSON no están
+coordinados; se recomienda guardado por reemplazo atómico. Si el archivo cambia
+después de cargarlo se aplica en la siguiente operación. Escritores que eludan
+JobStore conservan la limitación anterior.
+
+**Criterios de salida cumplidos:** 58 tests nuevos verifican XDG/fallback,
+Unicode y orden, catálogo vacío, carga/consulta/validación, errores estructurales,
+asignación, errores antes de escritura, comentario/exported/timestamps, historial,
+completitud y eliminación, edición manual, política de tipo, A/B, UUID explícito,
+exclusión concurrente entre procesos y captura de los siete códigos con catálogo
+inválido. Fuentes de escritorio sustituidas en estos tests; SQLite real y XDG
+aislado. Resultado: **618 tests superados** (560 anteriores conservados),
+`ruff check .`, `ruff format --check .` y `git diff --check` correctos.
+
+**Integración controlada ejecutada:** CLI en procesos independientes, dos trabajos
+y SQLite reales, XDG temporal aislado. A sin genérica ni contenido efectivo en
+comentario pasa de incompleta a completa al asignar; comentario exacto y exported
+conservados, timestamp actualizado. B permanece idéntica byte a byte (SHA-256).
+Reformular catálogo mantiene A exactamente igual. Asignar con UUID de A mientras
+B está activo conserva selección y comentario multilínea real. JSON corrupto
+rechaza asignación junto con edición de comentario sin cambiar ninguna base
+(SHA-256 de A/B verificados). Evidencia:
+`/tmp/audiobook-qc-descriptions-integration-t7dse0yj/verification.json`.
+No se usa configuración real, mpv/Okular reales ni GNOME en esta comprobación.
+
+**Pendientes reales:** catálogo editorial definitivo; sin historial de procedencia
+de la selección, editor interactivo, GUI, i18n, sincronización ni exportación. No
+quedan supuestos experimentales nuevos para la lógica del catálogo; las limitaciones
+de captura/documento/selección descritas en sus fases siguen vigentes.
+
 ## Fase 3: exportación a plantilla Excel corporativa
 
 **BLOQUEADA: no implementar hasta disponer de una muestra de la plantilla Excel

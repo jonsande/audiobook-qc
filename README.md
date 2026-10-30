@@ -509,6 +509,105 @@ trabajos: edición de A con B idéntico byte a byte y lógicamente, y los cuatro
 casos de completitud editorial comprobados. Evidencia temporal en
 `/tmp/audiobook-qc-review-integration-kf1hm4zq/verification.json`.
 
+## Descripciones genéricas configurables
+
+El catálogo global es JSON UTF-8 versionado, editable sin cambiar Python:
+`$XDG_CONFIG_HOME/audiobook-qc/descriptions.json`, o
+`~/.config/audiobook-qc/descriptions.json` si la variable está ausente/vacía.
+XDG_CONFIG_HOME debe ser absoluto. No pertenece a ninguna SQLite de trabajo.
+No se instala ni se sustituye automáticamente: si falta, consultar/asignar por
+ID da un error con la ruta. Puedes empezar con `{"version":1,"descriptions":[]}`
+o copiar **una vez, a una ruta que todavía no exista**, el ejemplo:
+
+```bash
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/audiobook-qc"
+cp -n examples/descriptions.provisional.json "${XDG_CONFIG_HOME:-$HOME/.config}/audiobook-qc/descriptions.json"
+python -m audiobook_qc.descriptions_cli validate
+```
+
+El ejemplo incluye una sola entrada, `ejemplo_pron_provisional`, con el texto
+«Ejemplo provisional: revisar pronunciación.», aplicable a PRON. Es una demostración,
+no el catálogo editorial acordado. El archivo tiene esta estructura:
+
+```json
+{
+  "version": 1,
+  "descriptions": [
+    {
+      "id": "ejemplo_pron_provisional",
+      "text": "Ejemplo provisional: revisar pronunciación.",
+      "incident_types": ["PRON"]
+    }
+  ]
+}
+```
+
+Los IDs son únicos, estables y siguen `[a-z][a-z0-9_-]*`: conserva el ID al
+reformular una frase. El orden del array determina la presentación. Cada entrada
+necesita texto efectivo y uno o más códigos de los siete existentes, sin repetidos.
+Un tipo puede tener cero, una o varias frases. Se rechazan claves desconocidas,
+claves JSON repetidas, IDs duplicados, tipos inválidos, campos ausentes, versiones
+desconocidas y estructuras incorrectas. Se conserva exactamente el texto Unicode,
+incluidos espacios y saltos. Guarda el archivo completo (preferiblemente mediante
+reemplazo atómico del editor) y valídalo después de editarlo.
+
+Flujo de revisión:
+
+1. Registra la incidencia con F1–F7.
+2. Lista incidencias con `python -m audiobook_qc.incidents_cli list`.
+3. Consulta el catálogo del tipo, por ejemplo PRON.
+4. Asigna el ID elegido al campo `generic_description`.
+5. Añade opcionalmente `custom_comment`.
+6. Consulta la vista previa editorial y la completitud.
+
+```bash
+python -m audiobook_qc.descriptions_cli list
+python -m audiobook_qc.descriptions_cli list PRON
+python -m audiobook_qc.descriptions_cli list PRON --json
+python -m audiobook_qc.descriptions_cli validate --json
+python -m audiobook_qc.incidents_cli edit 12 --generic-description-id ejemplo_pron_provisional
+python -m audiobook_qc.incidents_cli edit 12 --job UUID --generic-description-id ejemplo_pron_provisional --json
+python -m audiobook_qc.incidents_cli edit 12 --comment $'Detalle opcional.\nSegunda línea.'
+python -m audiobook_qc.incidents_cli get 12 --json
+```
+
+`descriptions_cli` acepta `--json` antes o después del subcomando. List devuelve
+`catalog`, `version`, `descriptions` (entradas con `id`, `text`, `incident_types`);
+validate devuelve `catalog`, `version`, `valid`, `count`. Errores: código 1 y stderr,
+sin JSON de éxito; argumentos inválidos: 2. No necesita un trabajo activo.
+
+La selección por ID escribe una **copia del texto**, sin almacenar el ID ni migrar
+SQLite. Valida existencia y compatibilidad con el tipo resultante antes de update;
+conserva `custom_comment`, `exported` y los demás campos no editados. Refresca
+`updated_at` cuando hay cambios; reasignar el mismo texto no escribe. La regla de
+completitud sigue siendo contenido efectivo en cualquiera de los dos campos.
+Eliminar la genérica puede volver incompleta una incidencia sin comentario.
+
+Modificar o retirar entradas del catálogo no modifica incidencias históricas.
+Sigue disponible `--generic-description "texto libre"`, y
+`--clear-generic-description` establece NULL. Estas opciones son mutuamente
+excluyentes con el ID. El texto manual no necesita figurar en el catálogo.
+
+**Cambio de tipo:** al no guardar procedencia/ID, no se puede distinguir con
+fiabilidad texto manual de texto elegido del catálogo, ni recuperar restricciones
+históricas. Por seguridad, si hay descripción efectiva, se rechaza cambiar el tipo
+conservando ese texto, aunque parezca compatible con el catálogo actual. Elimina
+o reemplaza explícitamente la descripción antes o en la misma edición. Puedes
+usar `--type TEXT --clear-generic-description`, proporcionar un texto manual
+distinto, o seleccionar un ID válido para el nuevo tipo en la misma edición.
+Esta última vía permite confirmar incluso una frase compartida sin cambiarla.
+No se borra información automáticamente ni se invalida el historial al leerlo.
+
+Un catálogo inválido no tiene fallback y la asignación falla sin modificar SQLite.
+Captura F1–F7, consulta de incidencias y edición manual no lo cargan. La selección
+por ID utiliza una única instantánea validada del archivo y mantiene el mismo
+flock de JobStore desde resolución del trabajo hasta commit: captura, otra edición
+y cambio de selección concurrentes se rechazan. La consulta del catálogo no toma
+ese bloqueo. Editores externos del JSON no están coordinados: un cambio posterior
+se aplica en la siguiente carga, sin alterar el texto que ya se seleccionó.
+La lógica inmutable del catálogo y el servicio de revisión son reutilizables por
+una futura GUI; ninguna vista necesita parsear la presentación humana.
+
 ## Flujo previsto
 
 1. El corrector detecta una incidencia y pausa manualmente mpv con Espacio.
