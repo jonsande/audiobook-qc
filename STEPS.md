@@ -971,7 +971,8 @@ elige fuentes. No se promete seguridad contra procesos maliciosos del mismo
 usuario que manipulen sockets/configuración. Metadatos de fuentes con rutas
 absolutas requieren reasociación si se mueven sus archivos.
 
-La prueba física A/B de esta ampliación queda pendiente. README contiene pasos
+El usuario confirmó posteriormente la prueba física A → B → A, sin mezcla de
+incidencias/fuentes incluso con mpv ajenos abiertos. README conserva los pasos
 con dos PDFs, dos mpv dedicados, otro mpv ajeno, A → B → A, capítulos, sockets
 caídos y PDF duplicado. Criterio: cada alta identifica el archivo/timestamp y
 PDF/página de su asociación, A/B permanecen separados y las ambigüedades no
@@ -1001,6 +1002,80 @@ y archivos temporales; lanzamiento sustituido, sin abrir el mpv real del usuario
 Resultado: **487 tests superados**; `ruff check .`, `ruff format --check .` y
 `git diff --check` correctos. No se modifican dominio, esquema SQLite ni
 configuración GNOME. Sin commits.
+
+## Primera capa de consulta y edición de incidencias por trabajo
+
+**Alcance:** base de revisión solicitada, previa a la GUI de Fase 4, sin adelantar
+Excel (Fase 3 continúa bloqueada). La rama master partía limpia del commit
+b2de1df y 487 tests. No se introducen migraciones, dependencias o cambios de GNOME.
+
+**Arquitectura:** `incident_review.py` contiene consulta por ID y edición con
+lista cerrada de campos y validación de Incident, mediante protocolo de repositorio
+sustituible. `incidents_cli.py` compone presentación humana/JSON, trabajo y SQLite.
+JobStore.destination acepta opcionalmente UUID explícito bajo el mismo bloqueo;
+sin UUID conserva la resolución del trabajo activo. No modifica la selección ni
+acepta rutas SQLite arbitrarias. El repositorio existente ya ofrece get/list/update
+parametrizados y no cambia su API/esquema.
+
+**Edición:** incident_type (solo los siete códigos), audio_position_seconds,
+document, page, selected_text, generic_description y custom_comment. Se protegen
+id, created_at, updated_at, audio_filename, audio_path y exported. El repositorio
+actualiza updated_at al cambiar datos; una edición sin cambios no escribe. No se
+expone borrado ni cambio del booleano exported en esta capa.
+
+**Regla editorial:** Incident centraliza componentes efectivos, completitud y
+composición con separador obligatorio elegido por el consumidor. NULL/vacío/solo
+whitespace no cuentan como contenido, pero se conservan exactamente en almacenamiento.
+Basta uno de los dos componentes. La CLI une con salto de línea solo su vista
+previa; no concatena campos persistidos ni fija el formato corporativo. exported
+permanece independiente. No se implementa catálogo editorial definitivo.
+
+**Interfaz:** incidents_cli list/get ID/edit ID, --job UUID y --json antes o
+después del subcomando. Los nullable permiten cadena vacía o clear explícito a
+NULL, con opciones mutuamente excluyentes. El listado es determinista por creación
+e ID, con textos resumidos; get/JSON conservan todos los datos. JSON añade posición
+formateada, editorially_complete y editorial_description_preview, e identifica
+trabajo en cada respuesta. Fechas ISO UTC; segundos conservan binary64. La
+representación editorial usa HH:MM:SS por truncamiento hacia cero, sin redondear
+ni alterar los decimales almacenados o expuestos en JSON. README contiene flujo diario,
+comandos de edición y ejemplos multilínea/Unicode.
+
+**Concurrencia:** el flock existente fija trabajo y base durante lectura, edición,
+validación y commit. Otra captura, revisión o selección simultánea se rechaza;
+no hay nuevo bloqueo global, cola ni fallback. Las operaciones técnicas externas
+que eludan JobStore no se coordinan. Fuentes mpv/Okular y modo no son requisitos
+para revisar; la nueva CLI no los consulta ni cambia sus asociaciones.
+
+**Criterios de salida:** listado vacío/ordenado, consulta completa, campos
+permitidos/protegidos, nullable y Unicode preservados, timestamps/fechas correctos,
+completitud independiente de exported, A/B aislados por selección y UUID, rechazos
+concurrentes y JSON estable. Se añaden 57 tests de revisión y 16 del formato,
+con SQLite y configuración temporales. Resultado: **560 tests superados**,
+`ruff check .`, `ruff format --check .` y `git diff --check` correctos. No se
+presenta esta capa como GUI de revisión terminada ni como exportación implementada.
+
+**Integración ejecutada:** CLI en procesos independientes, dos trabajos y SQLite
+reales. A contiene cuatro casos: solo genérica, solo comentario, ambos y vacío/NULL;
+completitud true/true/true/false. Se editó A usando selección y también UUID mientras
+B estaba activo; selección de B conservada. B permaneció lógica y byte a byte
+idéntico (SHA-256 registrado). Recarga en procesos nuevos, texto exacto y precisión
+binary64 verificados. Evidencia y bases en
+`/tmp/audiobook-qc-review-integration-kf1hm4zq/verification.json`.
+Sin cambios en configuración real o GNOME. Sin commits.
+
+**Ajuste final de Prompt 016:** la prueba física del usuario confirmó la
+precisión de 120.081537 s. Se centraliza el formato editorial en la función pura
+`audio_position.format_audio_position`: HH:MM:SS sin milisegundos, truncando
+hacia cero (120.999 → 00:02:00), con horas sin reinicio tras 24. La CLI técnica
+de diagnóstico conserva su presentación con milisegundos. Se prueban los ejemplos
+solicitados, límites de minuto/hora, más de 24/99 horas y conservación exacta
+del float en SQLite/JSON. No se cambia la persistencia.
+
+**Decisiones pendientes/límites:** el catálogo y separador definitivo de la futura
+Descripción incidencia requieren el acuerdo posterior de exportación. No hay
+historial/deshacer, operaciones de exported, búsqueda avanzada ni edición de la
+identidad de audio. La regla implementada solo expresa preparación editorial
+mínima, sin declarar listas para una plantilla desconocida las demás propiedades.
 
 ## Fase 3: exportación a plantilla Excel corporativa
 

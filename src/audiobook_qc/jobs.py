@@ -247,16 +247,19 @@ class JobStore:
             _write(self.config, data)
 
     @contextmanager
-    def destination(self) -> Iterator[tuple[CorrectionJob, SQLiteIncidentRepository]]:
-        """Fija y valida el destino hasta terminar el commit, sin crear SQLite."""
+    def destination(
+        self, job_id: str | None = None
+    ) -> Iterator[tuple[CorrectionJob, SQLiteIncidentRepository]]:
+        """Fija trabajo activo o UUID explícito hasta el commit, sin crear SQLite."""
         with self.lock():
             data = self._load()
-            if data["active"] is None:
+            selected = job_id if job_id is not None else data["active"]
+            if selected is None:
                 raise NoActiveJob(
                     "No hay trabajo activo; selecciona uno con "
                     "python -m audiobook_qc.jobs_cli select."
                 )
-            job = self._get(data, data["active"])
+            job = self._get(data, selected)
             with self._repository(job) as repository:
                 yield job, repository
 

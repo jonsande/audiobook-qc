@@ -27,6 +27,24 @@ class Incident:
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime | None = None
 
+    @property
+    def editorial_components(self) -> tuple[str, ...]:
+        """Componentes con contenido efectivo, conservando su texto exacto."""
+        return tuple(
+            value
+            for value in (self.generic_description, self.custom_comment)
+            if value is not None and value.strip()
+        )
+
+    @property
+    def editorially_complete(self) -> bool:
+        """Preparación editorial mínima; independiente de haber sido exportada."""
+        return bool(self.editorial_components)
+
+    def compose_editorial_description(self, *, separator: str) -> str:
+        """Composición en memoria; el consumidor decide el separador, sin persistir."""
+        return separator.join(self.editorial_components)
+
     def __post_init__(self) -> None:
         object.__setattr__(self, "incident_type", IncidentType(self.incident_type))
         for name in ("audio_filename", "audio_path", "document", "selected_text"):

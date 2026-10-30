@@ -348,7 +348,10 @@ Verificación automatizada de esta ampliación: **476 tests superados** (52 nuev
 de A/B usan SQLite real y dobles de fuentes; la comprobación D-Bus real fue
 solo de lectura sobre una vista ya abierta.
 
-### Prueba física de las nuevas fuentes (pendiente)
+### Procedimiento de prueba física de las fuentes
+
+El usuario ha confirmado A → B → A sin mezcla de fuentes con otros mpv abiertos.
+El procedimiento siguiente conserva también los casos de fallo para regresión.
 
 Usa dos trabajos nuevos, A y B, en una raíz persistente de prueba. Anota sus UUID
 como `UUID_A` y `UUID_B`, y las bases devueltas por `jobs_cli get UUID` como `DB_A`
@@ -392,6 +395,119 @@ python -m audiobook_qc.correction_mode on --notify
 Para contrastar el timestamp antes de capturar puedes consultar `mpv_probe
 --socket RUTA` usando exclusivamente la ruta mostrada por `sources UUID_A`.
 No se presupone que el nuevo lanzador restaure una posición de otra sesión.
+
+## Consulta y edición de incidencias por trabajo
+
+`incidents_cli` permite revisar lo registrado sin abrir mpv/Okular ni introducir
+rutas SQLite. Usa por defecto el trabajo seleccionado. `--job UUID` elige otro
+trabajo únicamente para esa operación, sin cambiar la selección persistente.
+Los ID son locales a cada trabajo; la salida siempre identifica el nombre/UUID.
+Las opciones `--job` y `--json` se aceptan antes o después del subcomando.
+
+Flujo de revisión tras trabajar con F1–F7 (sustituye 12 por un ID del listado):
+
+```bash
+# Terminar la sesión y devolver las teclas a las aplicaciones:
+python -m audiobook_qc.correction_mode off --notify
+python -m audiobook_qc.incidents_cli list
+python -m audiobook_qc.incidents_cli get 12
+python -m audiobook_qc.incidents_cli edit 12 --type PRON --page 34 --position 1104.5171234567
+python -m audiobook_qc.incidents_cli edit 12 --generic-description "Revisar pronunciación"
+python -m audiobook_qc.incidents_cli edit 12 --comment $'Primera línea.\nDetalle adicional con Unicode: ñ.'
+python -m audiobook_qc.incidents_cli get 12 --json
+python -m audiobook_qc.incidents_cli list
+# Consultar/editar otro trabajo sin seleccionarlo:
+python -m audiobook_qc.incidents_cli list --job UUID
+python -m audiobook_qc.incidents_cli edit 12 --job UUID --comment "Corrección de este trabajo"
+```
+
+`off` es una recomendación para revisar con tranquilidad: la CLI de revisión no
+requiere modo activo ni fuentes abiertas. No modifica GNOME ni fuentes. Las
+ediciones del documento/página de una incidencia tampoco cambian el PDF asociado
+al trabajo para capturas posteriores.
+
+`list` ordena por fecha de creación e ID y muestra tipo, archivo, posición legible,
+página, texto resumido, ambos campos editoriales, exported y completitud. Las
+cadenas se muestran entre comillas con CR/LF escapados; `NULL` y `""` se distinguen.
+`get ID` muestra todos los campos sin resumir, incluidos ruta de audio, posición
+exacta, fechas UTC y vista previa editorial. `edit` devuelve el registro guardado.
+
+Campos permitidos en `edit`:
+
+| Opción | Campo |
+| --- | --- |
+| `--type` | `incident_type`: TEXT, PRON, DICC, RUID, RESP, INTER u OTRO |
+| `--position` | `audio_position_seconds`, segundos finitos nativos |
+| `--document` | Identificador de documento, texto no vacío |
+| `--page` | Página nativa entera no negativa, sin conversión |
+| `--selected-text` | Texto seleccionado no vacío |
+| `--generic-description` | Descripción genérica, admite cadena vacía |
+| `--comment` o `--custom-comment` | Comentario libre/multilínea, admite cadena vacía |
+| `--clear-generic-description` | Establece generic_description a NULL |
+| `--clear-comment` o `--clear-custom-comment` | Establece custom_comment a NULL |
+
+No indicar un campo conserva su valor. Para vaciarlo manteniendo cadena vacía,
+usa `--comment ""` o `--generic-description ""`; para NULL usa la opción clear.
+No pueden usarse simultáneamente valor y clear para el mismo campo. Los ejemplos
+multilínea usan la sintaxis `$'...'` de Bash; saltos, espacios y Unicode se
+conservan en SQLite, sin normalización ni concatenación entre campos.
+
+Se protegen audio_filename, audio_path, id, created_at, updated_at y exported.
+No hay comando de borrado ni operación para marcar exported en esta capa.
+Una edición efectiva cambia updated_at mediante el repositorio; repetir los
+mismos valores conserva fechas y no escribe. No se cambia exported al editar,
+aunque se complete o se vacíe una descripción. `incident_probe --db ...` conserva
+su alcance técnico separado para diagnóstico.
+
+### Completitud editorial y vista previa
+
+Una incidencia está **editorialmente completa** si al menos uno de
+`generic_description` o `custom_comment` tiene contenido distinto de espacios.
+NULL, cadena vacía y texto solo con whitespace se consideran sin contenido.
+Ningún componente exige el otro. Ambos permanecen independientes en SQLite.
+La regla vive en `Incident.editorial_components`/`editorially_complete`, sin
+conocer GUI o exportación. `compose_editorial_description(separator=...)`
+permite construir la descripción sin persistirla ni decidir el formato de Excel.
+
+La CLI presenta `editorial_description_preview` uniendo los componentes efectivos
+con un salto de línea. Ese separador es solo de previsualización; el separador
+corporativo queda pendiente. Se conservan intactos espacios, saltos y Unicode de
+los componentes efectivos. La completitud es un requisito editorial mínimo;
+no implica exportación realizada ni valida una plantilla Excel. El esquema y
+el booleano exported permanecen independientes, sin migraciones.
+
+### JSON, precisión y concurrencia
+
+`--json` devuelve un objeto con `job: {id, name}` e `incidents` (listado) o
+`incident` (consulta/edición). Cada incidencia contiene todos los campos
+persistidos, fechas ISO 8601 UTC con microsegundos y estos derivados:
+`audio_position_formatted`, `editorially_complete`, `editorial_description_preview`.
+Los textos no se resumen en JSON. `audio_position_seconds` mantiene la precisión
+binary64 existente tanto en SQLite como en JSON. `audio_position_formatted` usa
+`HH:MM:SS`, sin milisegundos, truncando hacia el segundo entero (hacia cero):
+`120.081537` y `120.999` se muestran como `00:02:00`, nunca `00:02:01`.
+Las horas no se reinician al superar 24 y pueden tener más de dos dígitos.
+La función pura `audio_position.format_audio_position` es reutilizable para
+la futura representación editorial/exportación y no modifica los segundos.
+
+Las operaciones resuelven trabajo y base mediante `JobStore.destination` y
+conservan su flock existente durante consulta, validación y commit. Esto coordina
+revisión, F1–F7, otra edición y cambios de selección/configuración que usan la
+misma infraestructura. No se añaden bloqueos globales. Una operación coincidente
+se rechaza, sin espera ni reintento automático; vuelve a consultar antes de repetir
+la edición. No coordina escritores técnicos externos que eviten este bloqueo.
+No hay editor interactivo ni historial/deshacer; revisa los valores antes de editar.
+
+No se crean ni inicializan bases en esta CLI. Sin trabajo válido, base disponible
+o ID existente, falla sin fallback a otro trabajo. Éxito: salida 0; errores de
+operación: 1 en stderr; argumentos inválidos: 2. En error no imprime JSON de éxito.
+No hay GUI, exportación, CSV, borrado, filtros avanzados o catálogo definitivo.
+
+Verificación de esta capa: **560 tests superados** (73 nuevos); Ruff lint, formato
+y `git diff --check` correctos. Integración en procesos independientes con dos
+trabajos: edición de A con B idéntico byte a byte y lógicamente, y los cuatro
+casos de completitud editorial comprobados. Evidencia temporal en
+`/tmp/audiobook-qc-review-integration-kf1hm4zq/verification.json`.
 
 ## Flujo previsto
 
@@ -477,6 +593,8 @@ dependen de las aplicaciones instaladas.
 │       ├── desktop_policy.py
 │       ├── diagnostics.py
 │       ├── incident.py
+│       ├── incident_review.py
+│       ├── incidents_cli.py
 │       ├── incident_probe.py
 │       ├── integrations/
 │       │   ├── __init__.py
@@ -540,6 +658,8 @@ python -m audiobook_qc.mpv_probe
 python -m audiobook_qc.mpv_probe --socket /ruta/al/socket.sock
 ```
 
+Esta utilidad técnica de diagnóstico conserva milisegundos; el campo editorial
+`audio_position_formatted` de revisión usa `HH:MM:SS` con truncamiento.
 Muestra archivo, ruta comunicada por mpv, posición en `HH:MM:SS.mmm` y segundos
 decimales, duración si está disponible y estado de pausa. No inicia mpv, no pausa,
 no hace seek ni observa continuamente. No cambia `mpv.conf`. Para repetir la
