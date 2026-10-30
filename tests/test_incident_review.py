@@ -10,7 +10,6 @@ from uuid import uuid4
 import pytest
 
 from audiobook_qc import capture_save_probe, incidents_cli
-from audiobook_qc.captured_incident import IncidentType
 from audiobook_qc.incident import Incident
 from audiobook_qc.incident_review import ReviewError, edit_incident
 from audiobook_qc.integrations.activation import ActivationBusy
@@ -131,6 +130,7 @@ def test_get_all_fields_exact_precision_and_stable_json_schema(jobs, capsys):
         "audio_position_formatted",
         "editorially_complete",
         "editorial_description_preview",
+        "incident_type_info",
     }
     assert view["audio_position_seconds"].hex() == saved.audio_position_seconds.hex()
     assert view["audio_position_formatted"] == "00:18:24"
@@ -157,7 +157,7 @@ def test_missing_incident_is_error_without_success_or_write(jobs, capsys):
 @pytest.mark.parametrize(
     "options,field,value",
     [
-        (["--type", "PRON"], "incident_type", IncidentType.PRON),
+        (["--type", "PRON"], "incident_type", "PRON"),
         (["--position", "19.300243"], "audio_position_seconds", 19.300243),
         (["--document", "file:///corregido.pdf"], "document", "file:///corregido.pdf"),
         (["--page", "0"], "page", 0),
@@ -264,8 +264,6 @@ def test_both_editorial_fields_preview_is_composed_without_overwriting_storage(
 @pytest.mark.parametrize(
     "options",
     [
-        ["--type", "INVALID"],
-        ["--type", "text"],
         ["--id", "2"],
         ["--audio-path", "/otro"],
         ["--audio-filename", "otro"],
@@ -291,6 +289,8 @@ def test_parser_rejects_invalid_type_protected_fields_and_ambiguous_edits(
 @pytest.mark.parametrize(
     "options",
     [
+        ["--type", "INVALID"],
+        ["--type", "text"],
         ["--position", "nan"],
         ["--position", "inf"],
         ["--page", "-1"],

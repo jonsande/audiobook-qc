@@ -6,6 +6,9 @@ import pytest
 @pytest.fixture(autouse=True)
 def isolated_job_configuration(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    from audiobook_qc.type_config import install_initial_types
+
+    install_initial_types()
 
 
 @pytest.fixture

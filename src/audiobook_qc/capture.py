@@ -3,10 +3,11 @@
 from collections.abc import Callable
 from typing import TypeVar
 
-from audiobook_qc.captured_incident import CapturedIncident, IncidentType
+from audiobook_qc.captured_incident import CapturedIncident
 from audiobook_qc.integrations.mpv import MpvError, MpvState
 from audiobook_qc.integrations.okular import OkularError, OkularState
 from audiobook_qc.integrations.selection import Selection, SelectionError
+from audiobook_qc.type_catalog import TypeCatalog
 
 T = TypeVar("T")
 
@@ -24,6 +25,7 @@ def _required(value: T | None, field: str) -> T:
 def capture_incident(
     code: str,
     *,
+    types: TypeCatalog,
     read_primary: Callable[[], Selection],
     read_document: Callable[[], OkularState],
     read_audio: Callable[[], MpvState],
@@ -35,7 +37,7 @@ def capture_incident(
     pero no se impone como nueva regla de negocio. No se verifica origen del texto.
     """
     try:
-        incident_type = IncidentType(code)
+        incident_type = types.require_enabled(code).id
     except ValueError as exc:
         raise CaptureError(f"Código de incidencia inválido: {code!r}.") from exc
     try:

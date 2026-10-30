@@ -10,7 +10,6 @@ from pathlib import Path
 import pytest
 
 from audiobook_qc import incident_probe
-from audiobook_qc.captured_incident import IncidentType
 from audiobook_qc.incident import Incident
 from audiobook_qc.sqlite_repository import (
     IncidentNotFoundError,
@@ -22,7 +21,7 @@ from audiobook_qc.sqlite_repository import (
 @pytest.fixture
 def incident() -> Incident:
     return Incident(
-        IncidentType.TEXT,
+        "TEXT",
         "capítulo.mp3",
         "/no/existe/audio.mp3",
         1104.5171234567,
@@ -57,7 +56,7 @@ def test_explicit_initialization_required(tmp_path: Path, incident: Incident) ->
         repository.initialize()
         assert repository.get(stored.id) == stored
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 1
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 2
 
 
 def test_add_close_reopen_and_read(database: Path, incident: Incident) -> None:
@@ -126,7 +125,7 @@ def test_edit_and_reopen_source_of_truth(
         stored = repository.add(incident)
         edited = replace(
             stored,
-            incident_type=IncidentType.PRON,
+            incident_type="PRON",
             audio_filename="otro.mp3",
             audio_path="ruta/relativa.mp3",
             audio_position_seconds=0.125123,
@@ -187,7 +186,7 @@ def test_missing_identity_and_preserved_creation_date(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("incident_type", "NEW"),
+        ("incident_type", "BAD-NEW"),
         ("incident_type", "text"),
         ("incident_type", None),
         ("audio_filename", None),
@@ -237,7 +236,7 @@ def test_failed_transaction_rolls_back_all_changes(
     with sqlite3.connect(database) as connection:
         with pytest.raises(sqlite3.IntegrityError), connection:
             connection.execute("UPDATE incidents SET custom_comment='discarded'")
-            connection.execute("UPDATE incidents SET incident_type='INVALID'")
+            connection.execute("UPDATE incidents SET incident_type='INVALID!'")
     with SQLiteIncidentRepository(database) as repository:
         assert repository.get(stored.id) == stored
 
@@ -253,7 +252,7 @@ def test_parameterized_sql_preserves_quotes(database: Path, incident: Incident) 
         assert len(repository.list()) == 1
 
 
-@pytest.mark.parametrize("version", [2, 999])
+@pytest.mark.parametrize("version", [3, 999])
 def test_unknown_schema_is_not_changed(tmp_path: Path, version: int) -> None:
     path = tmp_path / "future.sqlite3"
     with sqlite3.connect(path) as connection:

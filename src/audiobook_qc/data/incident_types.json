@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "types": [
+    {"id": "TEXT", "label": "Texto", "enabled": true, "default_generic_description": null},
+    {"id": "PRON", "label": "Pronunciación", "enabled": true, "default_generic_description": "Revisar pronunciación."},
+    {"id": "DICC", "label": "Dicción", "enabled": true, "default_generic_description": "Revisar dicción."},
+    {"id": "RUID", "label": "Ruido", "enabled": true, "default_generic_description": "Ruido."},
+    {"id": "RESP", "label": "Respiración", "enabled": true, "default_generic_description": "Respiración."},
+    {"id": "INTER", "label": "Entonación", "enabled": true, "default_generic_description": "Revisar entonación."},
+    {"id": "OTRO", "label": "Otro", "enabled": true, "default_generic_description": null}
+  ],
+  "hotkeys": {"F1": "TEXT", "F2": "PRON", "F3": "DICC", "F4": "RUID", "F5": "RESP", "F6": "INTER", "F7": "OTRO"}
+}

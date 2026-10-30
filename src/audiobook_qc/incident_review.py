@@ -6,6 +6,7 @@ from typing import Protocol
 
 from audiobook_qc.descriptions import DescriptionCatalog
 from audiobook_qc.incident import Incident
+from audiobook_qc.type_catalog import TypeCatalog
 
 EDITABLE_FIELDS = frozenset(
     {
@@ -45,13 +46,15 @@ def edit_incident(
     *,
     catalog: DescriptionCatalog | None = None,
     description_id: str | None = None,
+    types: TypeCatalog | None = None,
+    default_description: bool = False,
 ) -> Incident:
     """El llamador mantiene el trabajo bloqueado desde get hasta el commit.
 
     Solo reemplaza los campos permitidos; Incident valida antes de update.
     Repetir valores ya guardados no escribe ni altera updated_at.
     """
-    if not changes and description_id is None:
+    if not changes and description_id is None and not default_description:
         raise ReviewError("Indica al menos un campo para editar.")
     forbidden = set(changes) - EDITABLE_FIELDS
     if forbidden:
@@ -60,12 +63,27 @@ def edit_incident(
         )
     stored = get_incident(repository, incident_id)
     resolved = dict(changes)
+    target = replace(stored, **resolved)
+    if target.incident_type != stored.incident_type:
+        if types is None:
+            raise ReviewError("Cambiar el tipo requiere un catálogo de tipos validado.")
+        types.require_enabled(target.incident_type)
+    if default_description:
+        if description_id is not None or "generic_description" in resolved:
+            raise ReviewError("No combines fórmula predeterminada y otra descripción.")
+        if types is None:
+            raise ReviewError("La fórmula requiere un catálogo de tipos validado.")
+        text = types.get(target.incident_type).default_generic_description
+        if text is None or not text.strip():
+            raise ReviewError(
+                f"El tipo {target.incident_type} no tiene fórmula efectiva."
+            )
+        resolved["generic_description"] = text
     if description_id is not None:
         if "generic_description" in resolved:
             raise ReviewError("No combines texto manual y un ID de descripción.")
         if catalog is None:
             raise ReviewError("La selección por ID requiere un catálogo validado.")
-        target = replace(stored, **resolved)
         resolved["generic_description"] = catalog.resolve(
             description_id, target.incident_type
         )
@@ -76,6 +94,7 @@ def edit_incident(
         and stored.generic_description.strip()
         and edited.generic_description == stored.generic_description
         and description_id is None
+        and not default_description
     ):
         raise ReviewError(
             "Cambio de tipo rechazado: la descripción existente podría ser "

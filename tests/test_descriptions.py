@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import pytest
 
 from audiobook_qc import capture_save_probe, descriptions_cli, incidents_cli
-from audiobook_qc.captured_incident import CapturedIncident, IncidentType
+from audiobook_qc.captured_incident import CapturedIncident
 from audiobook_qc.description_config import catalog_path, load_catalog
 from audiobook_qc.descriptions import CatalogError
 from audiobook_qc.incident import Incident
@@ -76,13 +76,11 @@ def test_valid_catalog_unicode_order_and_multiple_types():
     write_catalog(entries)
     catalog = load_catalog()
     assert [asdict(item) for item in catalog.list()] == [
-        item
-        | {"incident_types": tuple(IncidentType(t) for t in item["incident_types"])}
-        for item in entries
+        item | {"incident_types": tuple(item["incident_types"])} for item in entries
     ]
-    assert [item.id for item in catalog.list(IncidentType.PRON)] == ["pron", "shared"]
-    assert [item.id for item in catalog.list(IncidentType.TEXT)] == ["shared"]
-    assert catalog.list(IncidentType.RUID) == ()
+    assert [item.id for item in catalog.list("PRON")] == ["pron", "shared"]
+    assert [item.id for item in catalog.list("TEXT")] == ["shared"]
+    assert catalog.list("RUID") == ()
 
 
 def test_xdg_path(monkeypatch, tmp_path):
@@ -289,13 +287,13 @@ def test_type_change_rejected_then_clear_or_replace_or_compatible_id(jobs, capsy
     capsys.readouterr()
     assert job_database(a).read_bytes() == before
     cli(capsys, "edit", "1", "--type", "TEXT", "--clear-generic-description")
-    assert read(a).incident_type == IncidentType.TEXT
+    assert read(a).incident_type == "TEXT"
     cli(capsys, "edit", "1", "--generic-description", "Manual")
     cli(capsys, "edit", "1", "--type", "PRON", "--generic-description", "Otra manual")
     write_catalog([entry(types=["PRON", "TEXT"])])
     cli(capsys, "edit", "1", "--generic-description-id", "pron")
     cli(capsys, "edit", "1", "--type", "TEXT", "--generic-description-id", "pron")
-    assert read(a).incident_type == IncidentType.TEXT
+    assert read(a).incident_type == "TEXT"
 
 
 @pytest.mark.parametrize(
@@ -355,7 +353,9 @@ def test_assignment_rejected_by_capture_lock_across_processes(jobs):
     assert job_database(a).read_bytes() == before
 
 
-@pytest.mark.parametrize("code", [t.value for t in IncidentType])
+@pytest.mark.parametrize(
+    "code", ["TEXT", "PRON", "DICC", "RUID", "RESP", "INTER", "OTRO"]
+)
 def test_desktop_capture_all_seven_codes_ignores_invalid_catalog(
     jobs, monkeypatch, capsys, code
 ):
@@ -376,7 +376,7 @@ def test_desktop_capture_all_seven_codes_ignores_invalid_catalog(
         capture_save_probe,
         "capture_incident",
         lambda code, **kw: CapturedIncident(
-            IncidentType(code),
+            code,
             "cap.mp3",
             "/cap.mp3",
             120.081537,
@@ -390,7 +390,7 @@ def test_desktop_capture_all_seven_codes_ignores_invalid_catalog(
     assert data["incident_type"] == code
     with SQLiteIncidentRepository(job_database(a), existing=True) as repo:
         assert len(repo.list()) == 2
-        assert repo.get(2).incident_type == IncidentType(code)
+        assert repo.get(2).incident_type == code
 
 
 def test_service_requires_validated_catalog_and_rejects_ambiguous_selection(jobs):
@@ -432,4 +432,4 @@ def test_type_policy_does_not_infer_provenance_or_read_current_catalog(jobs, cap
     assert job_database(a).read_bytes() == before
     cli(capsys, "edit", "1", "--clear-generic-description")
     cli(capsys, "edit", "1", "--type", "TEXT")
-    assert read(a).incident_type == IncidentType.TEXT
+    assert read(a).incident_type == "TEXT"

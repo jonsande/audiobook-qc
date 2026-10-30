@@ -9,6 +9,11 @@ La protección posterior frente a activaciones involuntarias exige además modo
 activo y foco autorizado; su verificación se registra al final de la Fase 2.
 La gestión dinámica posterior también se validó: off libera los bindings y on
 restaura las combinaciones, sin alterar entradas ajenas.
+La ampliación actual incorpora tipos/fórmulas/atajos configurables y conserva
+lectura de SQLite v1; los tipos nuevos requieren v2 y migración explícita en
+trabajos antiguos. Sus resultados se registran antes de la Fase 3. Las notas de
+enum/catálogos provisionales/esquema fijo en fases anteriores son evidencia
+histórica y quedan sustituidas en esos aspectos por esta ampliación.
 
 ## Fase 0: fundación y pruebas de integración con el entorno
 
@@ -1154,6 +1159,129 @@ No se usa configuración real, mpv/Okular reales ni GNOME en esta comprobación.
 de la selección, editor interactivo, GUI, i18n, sincronización ni exportación. No
 quedan supuestos experimentales nuevos para la lógica del catálogo; las limitaciones
 de captura/documento/selección descritas en sus fases siguen vigentes.
+
+## Tipos de incidencia y atajos configurables
+
+**Alcance solicitado:** retirar el conjunto rígido de tipos y proporcionar
+configuración editorial de usuario, con base reutilizable por GUI, sin implementar
+GUI ni Excel. Se parte de master limpio con catálogo de descripciones y 618 tests.
+La petición autoriza nuevos IDs además de los siete iniciales. Sin commits ni
+cambios de GNOME; no se instalan tipos ni se migran trabajos reales.
+
+**Dominio:** `type_catalog.py` contiene definiciones inmutables con id estable,
+label, enabled y fórmula nullable; el orden es el del array. Incident y
+CapturedIncident conservan el ID como str validado sintácticamente, sin enum ni
+lectura de configuración. El catálogo puro no conoce atajos, archivos, SQL ni UI.
+Los casos de uso de captura y cambio de tipo reciben un catálogo y exigen un tipo
+habilitado antes de consultar fuentes/escribir. No se usa label como identidad.
+
+**Configuración/adaptador:** `type_config.py` carga una EditorialConfiguration
+inmutable que extiende el catálogo puro con el mapa de identificadores lógicos
+F1–F7. JSON UTF-8 versionado en `$XDG_CONFIG_HOME/audiobook-qc/incident_types.json`,
+fallback a `~/.config` si variable ausente/vacía; XDG relativo es error. Tipos sin
+límite de siete; IDs `[A-Z][A-Z0-9_]*`. Se rechazan claves/IDs duplicados, campos
+ausentes/desconocidos, labels sin contenido, enabled no booleano, fórmulas no
+textuales/no-null, versiones y estructuras incorrectas, JSON/UTF-8 corruptos.
+Atajos ausentes o null quedan libres; referencias a tipos inexistentes/deshabilitados
+invalidan el documento completo. Desactivar exige también desasignar esos atajos.
+
+**Inicialización real explícita:** `types_cli init` publica el recurso distribuido
+`data/incident_types.json`, incluido en el paquete instalado. Publicación por link
+exclusivo de archivo completo con permisos privados: nunca sobrescribe configuración
+existente ni symlinks. Incluye TEXT/Texto/null, PRON/Pronunciación/Revisar
+pronunciación., DICC/Dicción/Revisar dicción., RUID/Ruido/Ruido.,
+RESP/Respiración/Respiración., INTER/Entonación/Revisar entonación. y
+OTRO/Otro/null; todos habilitados, con F1–F7 en ese orden.
+La edición de JSON es la vía de gestión; README explica añadir, renombrar label,
+reformular, desactivar/reactivar, reasignar/desasignar y restaurar copia válida.
+
+**CLI y JSON:** `types_cli list/get ID/validate/hotkeys`, además de init, presentan
+salida humana y --json antes/después del subcomando. JSON ofrece ruta/version,
+definiciones y mapa; validate añade valid/count. `incidents_cli edit ID
+--default-description [--job UUID]` copia la fórmula del tipo resultante, sin
+sobrescribir comentario ni exported, y refresca updated_at solo cuando cambia
+contenido. Fórmula null/vacía/sin contenido provoca error sin borrar descripción
+existente. La captura sigue dejando genérica vacía: no se impone una fórmula.
+Se conservan texto manual, clear, comentario libre nullable/multilínea y regla
+de completitud en cualquiera de los dos campos.
+
+**Descripciones adicionales:** se conserva descriptions.json opcional y su CLI,
+con múltiples alternativas por tipo/ID de descripción. Sus asociaciones ahora se
+validan contra tipos configurados, incluidos deshabilitados para revisión histórica.
+No duplica necesariamente fórmulas ni es requisito para seleccionar la predeterminada.
+Retirar tipos exige limpiar referencias en ese catálogo para volver a usarlo;
+ni reformular ni retirar catálogos cambia el texto guardado en incidencias.
+
+**Historial y cambio de tipo:** los tipos conocidos deshabilitados siguen siendo
+legibles/editables en otros campos. Un ID válido ya persistido y retirado del
+catálogo se conserva como histórico; se muestra el propio ID. Una nueva selección
+no configurada se rechaza. Se mantiene la política conservadora para cambiar tipo
+con descripción efectiva: eliminar/reemplazar explícitamente o confirmar fórmula/ID
+válido para el nuevo tipo. No se infiere procedencia por igualdad de texto.
+JSON de revisión añade incident_type_info (id/label/enabled/status): enabled,
+disabled, historical o unavailable, estos últimos con enabled null. Con configuración
+corrupta/ausente, lectura y edición manual degradan con aviso y
+type_configuration_error en JSON, sin modificar SQLite por leer. IDs con sintaxis
+corrupta son error. No se puede diferenciar un ID válido persistido históricamente
+de otro ID válido inyectado por un escritor externo: no hay registro de procedencia.
+
+**Captura lógica y GNOME:** capture_save_probe acepta `--desktop --hotkey F2`,
+resuelve tipo desde configuración una vez y mantiene protecciones de modo, foco,
+fuentes, notificaciones y trabajo. Tipo posicional permanece como vía compatible
+pero también exige habilitación. Opciones hotkey/tipo son excluyentes. Un atajo
+sin asignación o configuración corrupta falla antes de consultar fuentes/escribir,
+sin fallback. README da los comandos exactos/generación para F1–F7 y migración
+manual: off, guardar entradas, reemplazar comandos, reasignar bindings, validar y
+on. No se modificó GSettings ni el journal real.
+
+**Esquema SQLite: necesidad real y migración explícita.** V1 no solo guardaba texto:
+tenía CHECK enumerando siete códigos. Admitir IDs nuevos exige reconstruirlo. V2
+conserva columnas/tipos y aplica CHECK sintáctico al ID, sin FK global. Bases nuevas
+son v2; abrir/leer/inicializar v1 no migra. V1 sigue funcionando con sus siete IDs
+originales habilitados; usar otro da error e instrucción de migración.
+`jobs_cli migrate-types UUID` mantiene flock, verifica columnas/objetos, copia filas
+en una transacción y conserva IDs, fechas, texto, precisión, exported y secuencia
+AUTOINCREMENT, incluso con todas las filas borradas. Errores revierten; repetir en
+v2 no escribe. Rechaza extensiones SQL externas para no perderlas. README exige
+respaldo previo y advierte que versiones antiguas no abren v2. No se aplican
+migraciones automáticamente ni se convierten tipos de incidencias.
+
+**Concurrencia:** cada captura/revisión usa una instantánea inmutable de configuración;
+si cambia después de cargar, termina con esa versión y el siguiente proceso carga
+la nueva. Edición externa del JSON no toma bloqueo global; se recomienda guardado
+por reemplazo atómico. Archivo parcial/corrupto se rechaza, sin rescatar fragmentos.
+Se conserva el flock de JobStore para captura/revisión/migración/selección y el
+aislamiento A/B. No se coordinan escritores técnicos externos que evitan JobStore.
+
+**Verificación:** 78 tests nuevos cubren configuración real, XDG/fallback, instalación
+exclusiva/symlink, errores de campos/estructura/asociaciones, Unicode/null/vacío,
+edición de fórmulas/labels, alta MUSI, desactivación/reactivación/retirada, historial
+JSON y degradación, asignación de fórmula, compatibilidad manual/catálogo anterior,
+política de tipo, captura lógica/reasignación/rechazos previos a fuentes, instantánea
+frente a cambio simultáneo, migración v1→v2 (fixture del esquema anterior), secuencia,
+rollback, idempotencia y bloqueo. Las pruebas previas se adaptan a IDs str, catálogo
+inyectado, esquema v2 y errores configurables, conservando sus escenarios.
+Resultado final: **696 tests superados** (618 anteriores adaptados y 78 nuevos),
+`ruff check .`, `ruff format --check .` (60 archivos) y `git diff --check` correctos.
+La suite completa se ejecutó con autorización fuera del sandbox para el test
+preexistente que crea un socket Unix temporal; las pruebas no acceden a GNOME real.
+
+**Integración controlada:** procesos independientes, configuración XDG y SQLite
+reales temporales, fuentes y activación de escritorio simuladas. Configuración
+inicial instalada explícitamente; F2 captura PRON; tras reasignar captura DICC;
+RESP histórico sigue legible deshabilitado y nuevas capturas RESP/F5 fallan sin
+escritura; alta MUSI y F7 capturan MUSI. Reformular PRON conserva exactamente la
+incidencia previa y una nueva selección copia la fórmula nueva. B permanece
+idéntica byte a byte (SHA-256). JSON corrupto rechaza captura sin alterar SQLite y
+get histórico funciona con aviso. Evidencia:
+`/tmp/audiobook-qc-types-integration-u2hgmeo1/verification.json`.
+
+**Límites reales:** edición mediante JSON, sin editor interactivo, GUI o Excel.
+Los identificadores lógicos actuales son F1–F7; el número de tipos no está limitado.
+No se ensayaron pulsaciones físicas ni la migración de comandos GNOME en esta tarea;
+pendiente manual: aplicar los comandos documentados, reasignar bindings y confirmar
+que F2 usa PRON/DICC al cambiar solo JSON, con modo/foco y trabajo autorizados.
+Las validaciones previas de fuentes/selección conservan sus límites experimentales.
 
 ## Fase 3: exportación a plantilla Excel corporativa
 

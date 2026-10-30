@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass
 
-from audiobook_qc.captured_incident import IncidentType
+from audiobook_qc.type_catalog import validate_type_id
 
 
 class CatalogError(ValueError):
@@ -14,7 +14,7 @@ class CatalogError(ValueError):
 class GenericDescription:
     id: str
     text: str
-    incident_types: tuple[IncidentType, ...]
+    incident_types: tuple[str, ...]
 
     def __post_init__(self) -> None:
         if not isinstance(self.id, str) or not re.fullmatch(
@@ -26,10 +26,12 @@ class GenericDescription:
         if (
             not isinstance(self.incident_types, tuple)
             or not self.incident_types
-            or any(not isinstance(t, IncidentType) for t in self.incident_types)
+            or any(not isinstance(t, str) for t in self.incident_types)
             or len(set(self.incident_types)) != len(self.incident_types)
         ):
             raise CatalogError(f"Tipos inválidos o duplicados en {self.id}.")
+        for identifier in self.incident_types:
+            validate_type_id(identifier)
 
 
 @dataclass(frozen=True)
@@ -45,22 +47,19 @@ class DescriptionCatalog:
         if len(set(ids)) != len(ids):
             raise CatalogError("IDs duplicados en el catálogo.")
 
-    def list(
-        self, incident_type: IncidentType | None = None
-    ) -> tuple[GenericDescription, ...]:
+    def list(self, incident_type: str | None = None) -> tuple[GenericDescription, ...]:
         return tuple(
             item
             for item in self.descriptions
             if incident_type is None or incident_type in item.incident_types
         )
 
-    def resolve(self, identifier: str, incident_type: IncidentType) -> str:
+    def resolve(self, identifier: str, incident_type: str) -> str:
         for item in self.descriptions:
             if item.id == identifier:
                 if incident_type not in item.incident_types:
                     raise CatalogError(
-                        f"Descripción {identifier} incompatible "
-                        f"con {incident_type.value}."
+                        f"Descripción {identifier} incompatible con {incident_type}."
                     )
                 return item.text
         raise CatalogError(f"Descripción inexistente: {identifier}.")

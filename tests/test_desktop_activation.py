@@ -10,7 +10,7 @@ import pytest
 
 from audiobook_qc import capture_save_probe
 from audiobook_qc.capture import CaptureError
-from audiobook_qc.captured_incident import CapturedIncident, IncidentType
+from audiobook_qc.captured_incident import CapturedIncident
 from audiobook_qc.integrations import notifications
 from audiobook_qc.integrations.activation import ActivationBusy, activation_guard
 from audiobook_qc.integrations.notifications import NotificationError
@@ -42,7 +42,7 @@ def capture(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     def read(code: str, **sources: object) -> CapturedIncident:
         codes.append(code)
         return CapturedIncident(
-            IncidentType(code),
+            code,
             "á.wav",
             "./á.wav",
             19.300243,
@@ -55,7 +55,9 @@ def capture(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return codes
 
 
-@pytest.mark.parametrize("code", [code.value for code in IncidentType])
+@pytest.mark.parametrize(
+    "code", ["TEXT", "PRON", "DICC", "RUID", "RESP", "INTER", "OTRO"]
+)
 def test_desktop_command_maps_code_to_existing_use_case_and_notifies_after_commit(
     database: Path,
     capture: list[str],
@@ -73,7 +75,7 @@ def test_desktop_command_maps_code_to_existing_use_case_and_notifies_after_commi
     def notify(summary: str, body: str, *, error: bool) -> None:
         with SQLiteIncidentRepository(database) as repository:
             stored = repository.get(1)
-        assert stored is not None and stored.incident_type.value == code
+        assert stored is not None and stored.incident_type == code
         assert stored.selected_text == "  Texto parti-\r\ndo. e\u0301\n"
         assert stored.audio_position_seconds.hex() == (19.300243).hex()
         assert summary == "Incidencia guardada"

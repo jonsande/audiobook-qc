@@ -11,7 +11,7 @@ from pathlib import Path
 
 from audiobook_qc.capture import CaptureError, capture_incident
 from audiobook_qc.capture_and_save import capture_and_save_incident
-from audiobook_qc.captured_incident import CapturedIncident, IncidentType
+from audiobook_qc.captured_incident import CapturedIncident
 from audiobook_qc.correction_mode import ModeError, is_active
 from audiobook_qc.desktop_policy import ActivationRejected, require_correction_context
 from audiobook_qc.integrations import mpv, okular, selection
@@ -21,6 +21,7 @@ from audiobook_qc.integrations.notifications import NotificationError, notify
 from audiobook_qc.job_sources import SourceError, prepare_job_sources
 from audiobook_qc.jobs import JobError, JobStore, NoActiveJob, job_database
 from audiobook_qc.sqlite_repository import SchemaError, SQLiteIncidentRepository
+from audiobook_qc.type_config import load_types
 
 
 def _notify(summary: str, body: str, *, error: bool = False) -> None:
@@ -44,7 +45,8 @@ def main(argv: list[str] | None = None) -> int:
         "--db",
         help="Ruta técnica SQLite; en escritorio debe coincidir con el trabajo activo.",
     )
-    parser.add_argument("code", choices=[code.value for code in IncidentType])
+    parser.add_argument("code", nargs="?", help="ID de tipo habilitado (uso directo).")
+    parser.add_argument("--hotkey", choices=[f"F{i}" for i in range(1, 8)])
     parser.add_argument(
         "--mpv-socket", help="Socket explícito solo para diagnóstico sin --desktop."
     )
@@ -55,6 +57,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Exige modo activo y foco autorizado; notifica y evita solapamientos.",
     )
     args = parser.parse_args(argv)
+    if (args.code is None) == (args.hotkey is None):
+        parser.error("Indica un tipo o --hotkey, exclusivamente.")
     if not args.desktop and not args.db:
         parser.error("Sin --desktop se requiere --db para diagnóstico.")
     job = None
@@ -75,6 +79,13 @@ def main(argv: list[str] | None = None) -> int:
                 )
         destination = JobStore().destination() if args.desktop else nullcontext()
         with destination as target:
+            # Una única instantánea para resolución y captura; sin releer a mitad.
+            types = load_types()
+            code = (
+                types.resolve_hotkey(args.hotkey)
+                if args.hotkey is not None
+                else types.require_enabled(args.code).id
+            )
             if target is not None:
                 job, repository = target
                 if (
@@ -92,6 +103,7 @@ def main(argv: list[str] | None = None) -> int:
                 def capture(code: str) -> CapturedIncident:
                     captured = capture_incident(
                         code,
+                        types=types,
                         read_primary=partial(selection.read_selection, "primary"),
                         read_document=sources.read_document,
                         read_audio=sources.read_audio,
@@ -101,6 +113,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 capture = partial(
                     capture_incident,
+                    types=types,
                     read_primary=partial(selection.read_selection, "primary"),
                     read_document=partial(okular.read_state, args.okular_service),
                     read_audio=partial(
@@ -111,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
                 repository_context = SQLiteIncidentRepository(args.db)
             with guard, repository_context as repository:
                 incident = capture_and_save_incident(
-                    args.code, capture=capture, repository=repository
+                    code, types=types, capture=capture, repository=repository
                 )
     except JobError as exc:
         summary = (
@@ -153,7 +166,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.desktop:
         _notify(
             "Incidencia guardada",
-            f"{incident.incident_type.value} registrada (#{incident.id}) — {job.name}",
+            f"{incident.incident_type} registrada (#{incident.id}) — {job.name}",
         )
     return 0
 

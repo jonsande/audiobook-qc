@@ -13,6 +13,8 @@ corrección activo y foco autorizado antes de capturar. Sin GUI propia.
 El modo controla también la reserva efectiva de los atajos propios de GNOME.
 La gestión de trabajos añade selección persistente y una SQLite independiente
 por audiolibro; los atajos requieren un trabajo seleccionado válido.
+Los tipos, fórmulas y asignaciones F1–F7 son configuración editorial del usuario;
+instálala explícitamente con `python -m audiobook_qc.types_cli init` antes de capturar.
 El roadmap está en [STEPS.md](STEPS.md) y
 las reglas de desarrollo en [AGENTS.md](AGENTS.md).
 
@@ -70,18 +72,19 @@ pero no lo selecciona ni activa el modo. Organización real:
 ```
 
 `job.json` contiene versión, UUID, nombre y fecha; no incluye rutas absolutas.
-Una SQLite por trabajo conserva el esquema 1 y permite copiar o archivar la
-carpeta entera. No se modifica `Incident` ni se migran bases antiguas. Las CLI
+Una SQLite por trabajo permite copiar o archivar la carpeta entera. Nuevas bases
+usan esquema 2; las bases v1 siguen siendo legibles y no se migran al abrirlas.
+Consulta la migración explícita de tipos antes de usar IDs nuevos en bases antiguas. Las CLI
 `incident_probe --db RUTA ...` y `capture_save_probe --db RUTA CODIGO` siguen
 sirviendo para diagnóstico fuera del modo escritorio.
 
 ### Atajos y selección del destino
 
-Configura una sola vez las siete entradas de GNOME con este formato, cambiando
-el código final según F1–F7. Las fuentes se resuelven desde el trabajo activo:
+Configura una sola vez las siete entradas de GNOME con un identificador lógico
+F1–F7. Tipo y fuentes se resuelven dentro de la aplicación:
 
 ```text
-/RUTA/AL/PROYECTO/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop INTER
+/RUTA/AL/PROYECTO/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop --hotkey F6
 ```
 
 Retira `--db RUTA`, `--mpv-socket RUTA` y `--okular-service SERVICIO` de los
@@ -322,19 +325,43 @@ los sockets privados o archivos de configuración.
 
 ### Comandos GNOME tras la migración
 
-Conserva el intérprete absoluto instalado y deja únicamente `--desktop` y el código.
-Ejemplo exacto del formato para INTER (sustituye solo la ruta del intérprete):
+Conserva el intérprete absoluto y usa `--desktop --hotkey F1` hasta F7.
+Así, cambiar el tipo de F2 en JSON no requiere cambiar GNOME. El código posicional
+sigue disponible para diagnóstico/compatibilidad, pero los nuevos comandos de
+GNOME deben usar el atajo lógico.
 
-```text
-/RUTA/AL/PROYECTO/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop INTER
-```
-
-Repite con TEXT, PRON, DICC, RUID, RESP, INTER y OTRO para F1–F7. Retira de los
-comandos `--db`, `--mpv-socket` y `--okular-service` con sus valores. Para generar
-las siete líneas exactas con el intérprete del entorno actual, desde el venv:
+Desde el repositorio, genera las siete líneas exactas para pegar manualmente en
+las entradas correspondientes (este comando solo imprime, no cambia GNOME):
 
 ```bash
-python -c 'import shlex, sys; [print(shlex.join([sys.executable, "-m", "audiobook_qc.capture_save_probe", "--desktop", code])) for code in ("TEXT", "PRON", "DICC", "RUID", "RESP", "INTER", "OTRO")]'
+.venv/bin/python - <<'PY'
+import shlex
+import sys
+for index in range(1, 8):
+    print(shlex.join([
+        sys.executable, "-m", "audiobook_qc.capture_save_probe",
+        "--desktop", "--hotkey", f"F{index}",
+    ]))
+PY
+```
+
+Para este repositorio, por ejemplo, el comando de F2 es exactamente:
+
+```text
+/home/jon/prog/python/audiobook-qc/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop --hotkey F2
+```
+
+Antes de pegar los comandos: instala/valida tipos, revisa el mapa con
+`types_cli hotkeys`, ejecuta `python -m audiobook_qc.correction_mode off --notify`
+y guarda una copia de las entradas anteriores. En Configuración → Teclado →
+Atajos personalizados, cambia el comando de cada entrada y vuelve a asignarle su
+combinación F1–F7 explícitamente. Retira `--db`, `--mpv-socket`, `--okular-service`
+y el tipo posicional. No cambies entradas ajenas. Finalmente:
+
+```bash
+python -m audiobook_qc.types_cli validate
+python -m audiobook_qc.types_cli hotkeys --json
+python -m audiobook_qc.correction_mode on --notify
 ```
 
 Haz la edición manual con `off`, siguiendo la restauración de combinaciones del
@@ -474,7 +501,7 @@ con un salto de línea. Ese separador es solo de previsualización; el separador
 corporativo queda pendiente. Se conservan intactos espacios, saltos y Unicode de
 los componentes efectivos. La completitud es un requisito editorial mínimo;
 no implica exportación realizada ni valida una plantilla Excel. El esquema y
-el booleano exported permanecen independientes, sin migraciones.
+el booleano exported permanecen independientes de la completitud editorial.
 
 ### JSON, precisión y concurrencia
 
@@ -509,6 +536,172 @@ trabajos: edición de A con B idéntico byte a byte y lógicamente, y los cuatro
 casos de completitud editorial comprobados. Evidencia temporal en
 `/tmp/audiobook-qc-review-integration-kf1hm4zq/verification.json`.
 
+## Tipos, fórmulas habituales y atajos configurables
+
+Un tipo es una definición editorial con `id` estable, `label` visible, `enabled`
+y `default_generic_description` opcional. El orden del array `types` determina su
+presentación; no hay límite de siete tipos. El ID sigue `[A-Z][A-Z0-9_]*` y se
+almacena como texto en cada incidencia. Cambiar el label cambia la presentación
+actual, sin cambiar ese ID ni los textos guardados. No renombres/reutilices IDs
+históricos para otro concepto: añade un tipo y desactiva el anterior.
+
+Se guarda en `$XDG_CONFIG_HOME/audiobook-qc/incident_types.json`, con fallback a
+`~/.config/audiobook-qc/incident_types.json` si XDG está ausente/vacío. XDG relativo
+se rechaza. Instala explícitamente la configuración inicial:
+
+```bash
+python -m audiobook_qc.types_cli init
+python -m audiobook_qc.types_cli list
+python -m audiobook_qc.types_cli get PRON --json
+python -m audiobook_qc.types_cli hotkeys --json
+python -m audiobook_qc.types_cli validate --json
+```
+
+`init` publica el archivo completo sin sobrescribir nada existente, incluidos
+symlinks; nunca se llama automáticamente. El original distribuido está en
+`src/audiobook_qc/data/incident_types.json`, incluido también en el paquete instalado.
+Todos los comandos admiten `--json` antes/después del subcomando; errores operativos
+devuelven 1 por stderr y sin JSON de éxito; argumentos incorrectos, 2.
+
+Configuración inicial real, con todos los tipos habilitados:
+
+| ID | Label | Fórmula | Atajo lógico |
+| --- | --- | --- | --- |
+| TEXT | Texto | null | F1 |
+| PRON | Pronunciación | Revisar pronunciación. | F2 |
+| DICC | Dicción | Revisar dicción. | F3 |
+| RUID | Ruido | Ruido. | F4 |
+| RESP | Respiración | Respiración. | F5 |
+| INTER | Entonación | Revisar entonación. | F6 |
+| OTRO | Otro | null | F7 |
+
+El archivo tiene `version: 1`, `types: [...]` y `hotkeys: {...}`. Ejemplo de una
+entrada (no reemplaces el archivo completo con solo este fragmento):
+
+```json
+{
+  "id": "PRON",
+  "label": "Pronunciación",
+  "enabled": true,
+  "default_generic_description": "Revisar pronunciación."
+}
+```
+
+Edítalo con un editor de texto y guarda el documento completo, preferiblemente
+mediante reemplazo atómico. Antes de editar, guarda una copia, por ejemplo:
+
+```bash
+cp -n "${XDG_CONFIG_HOME:-$HOME/.config}/audiobook-qc/incident_types.json" "${XDG_CONFIG_HOME:-$HOME/.config}/audiobook-qc/incident_types.before-edit.json"
+```
+
+Para cambiar nombre o fórmula, edita `label` o `default_generic_description`.
+Se conservan Unicode, espacios y saltos exactamente. Fórmulas null, vacías o solo
+whitespace representan ausencia de fórmula efectiva. Para añadir MUSI, agrega
+una entrada con `id: "MUSI"`, `label: "Música"`, `enabled: true` y la fórmula
+elegida; no hay que modificar Python. Para cambiar F2, edita `hotkeys.F2` a otro
+ID habilitado. F1–F7 son identificadores lógicos; la combinación física sigue
+perteneciendo a GNOME. Un valor null o una clave ausente deja el atajo sin asignar.
+
+Para desactivar RESP, pon `enabled: false` y desasigna todos los atajos que apunten
+a RESP en el mismo guardado. Las referencias a tipos inexistentes/deshabilitados
+invalidan el archivo entero: no se rescatan entradas parcialmente. Para reactivarlo,
+pon `enabled: true` y vuelve a asignar los atajos deseados. Valida después de cada
+cambio. IDs/claves duplicados, campos ausentes/desconocidos, booleanos incorrectos,
+tipos de datos erróneos y JSON/UTF-8 corruptos se rechazan. Una lista vacía es válida.
+
+La captura no asigna fórmulas automáticamente. Selección rápida durante revisión:
+
+```bash
+python -m audiobook_qc.incidents_cli edit 12 --default-description
+python -m audiobook_qc.incidents_cli edit 12 --job UUID --default-description --json
+python -m audiobook_qc.incidents_cli edit 12 --type DICC --default-description
+python -m audiobook_qc.incidents_cli edit 12 --generic-description "Texto manual excepcional"
+python -m audiobook_qc.incidents_cli edit 12 --clear-generic-description
+```
+
+La selección copia el texto actual a `generic_description`, conservando comentario
+y exported; actualiza updated_at si cambia contenido. No usa `descriptions.json`.
+Si no hay fórmula efectiva, falla sin borrar nada. No se puede combinar con texto
+manual, clear o selección de otra descripción por ID. Una incidencia puede tener
+solo comentario, solo genérica, ambos o ninguno. La regla de completitud no cambia.
+Reformular el tipo no altera las descripciones históricas ya copiadas.
+
+Se conserva `descriptions.json` como catálogo **opcional de frases adicionales**
+con IDs propios y varias opciones por tipo. No necesita duplicar las fórmulas del
+tipo y no se requiere para capturar ni seleccionar la predeterminada. Sus
+asociaciones se validan contra los IDs configurados, incluso tipos deshabilitados
+para revisión histórica. Retirar un tipo puede exigir limpiar esas asociaciones
+antes de volver a utilizar ese catálogo; nunca altera incidencias existentes.
+
+**Historial y degradación:** los tipos habilitados pueden asignarse a nuevas
+capturas/cambios de tipo. Un tipo deshabilitado sigue siendo legible y permite
+editar los otros campos; no puede elegirse como nuevo tipo. Aunque recomendamos
+desactivar en vez de borrar, retirar una definición tampoco vuelve ilegible su
+historial: se presenta el ID original como label. El JSON de incidencias conserva
+`incident_type` y añade `incident_type_info` con `id`, `label`, `enabled` y `status`:
+`enabled`, `disabled`, `historical` (ID retirado) o `unavailable` (sin configuración
+válida). En estos dos últimos, enabled es null. IDs con sintaxis corrupta se
+rechazan, y un ID sintácticamente válido pero no configurado se rechaza como
+selección nueva. Un ID válido ya persistido se trata como histórico: sin registro
+adicional de procedencia no se puede distinguir de una manipulación externa que
+haya escrito otro ID válido directamente en SQLite.
+
+Con tipos corruptos/ausentes, list/get y edición de otros campos siguen funcionando
+con aviso humano y `type_configuration_error` en JSON. Capturas, cambio explícito
+de tipo y selección de fórmulas/catálogo fallan sin escritura ni fallback. Cambiar
+de tipo conservando una descripción efectiva mantiene la política conservadora:
+hay que eliminarla, reemplazarla manualmente o confirmar una selección válida
+(predeterminada o por ID) para el tipo resultante. Nunca se borra automáticamente.
+
+Cada operación usa una instantánea inmutable de configuración: si el archivo
+cambia después de cargarlo, la operación en curso termina con esa versión y la
+siguiente utiliza la nueva. No hay bloqueo editorial global ni se escribe el JSON
+durante captura. Guardar un archivo parcial provoca un error claro si coincide
+con su lectura. El flock de JobStore sigue fijando trabajo, lectura/edición/captura
+y commit frente a otras operaciones coordinadas. No coordina escritores externos
+que manipulen SQLite directamente.
+
+**Restauración:** corrige el JSON o restaura una copia válida a la ruta indicada,
+preferiblemente mediante reemplazo atómico, y ejecuta `types_cli validate`.
+Para volver al original distribuido, conserva primero el archivo problemático
+renombrándolo a una ruta de copia libre, ejecuta `types_cli init` y valida. Esto
+no toca SQLite ni convierte tipos históricos. No hay comandos de borrado de tipos.
+
+### Bases antiguas y migración explícita
+
+El esquema v1 contenía un CHECK SQL que enumeraba los siete códigos. Para admitir
+IDs nuevos es necesario reconstruir esa restricción: las bases nuevas son v2,
+con los mismos campos y un CHECK de sintaxis del ID, sin catálogo global ni FK.
+Leer/abrir/inicializar una v1 no la cambia. Puede seguir capturando sus siete IDs
+originales mientras estén habilitados; un ID nuevo exige migración explícita.
+
+Antes de migrar: ejecuta `off`, cierra escritores técnicos externos y copia la
+carpeta del trabajo a una ubicación de respaldo libre. Después:
+
+```bash
+python -m audiobook_qc.correction_mode off --notify
+python -m audiobook_qc.jobs_cli get UUID
+# Guarda una copia de la carpeta indicada por get antes de continuar.
+python -m audiobook_qc.jobs_cli migrate-types UUID
+python -m audiobook_qc.incidents_cli list --job UUID --json
+```
+
+La migración conserva IDs, texto, decimales, fechas, exported y secuencia de
+autoincremento. Usa una transacción y el bloqueo habitual del trabajo; repetirla
+en v2 no escribe. Rechaza columnas u objetos SQL adicionales para no perder
+extensiones externas. Un fallo revierte íntegramente la transacción. Esta tarea
+no ha migrado trabajos reales ni ejecutado cambios GNOME. Las versiones antiguas
+del programa no podrán abrir v2: conserva el respaldo si necesitas volver atrás.
+
+Verificación de tipos configurables: **696 tests superados**, con 78 nuevos y
+los escenarios anteriores adaptados. Ruff lint/formato y `git diff --check`
+correctos. Integración en procesos independientes con captura simulada y SQLite
+real: F2 PRON→DICC, RESP deshabilitado con historial legible, MUSI desde F7,
+fórmulas históricas preservadas y trabajo B idéntico byte a byte. Evidencia en
+`/tmp/audiobook-qc-types-integration-u2hgmeo1/verification.json`.
+La nueva migración de comandos GNOME queda pendiente de verificación física;
+esta tarea no modificó GSettings ni migró trabajos reales.
+
 ## Descripciones genéricas configurables
 
 El catálogo global es JSON UTF-8 versionado, editable sin cambiar Python:
@@ -527,7 +720,7 @@ python -m audiobook_qc.descriptions_cli validate
 
 El ejemplo incluye una sola entrada, `ejemplo_pron_provisional`, con el texto
 «Ejemplo provisional: revisar pronunciación.», aplicable a PRON. Es una demostración,
-no el catálogo editorial acordado. El archivo tiene esta estructura:
+no sustituye las fórmulas reales configuradas en los tipos. El archivo tiene esta estructura:
 
 ```json
 {
@@ -544,7 +737,8 @@ no el catálogo editorial acordado. El archivo tiene esta estructura:
 
 Los IDs son únicos, estables y siguen `[a-z][a-z0-9_-]*`: conserva el ID al
 reformular una frase. El orden del array determina la presentación. Cada entrada
-necesita texto efectivo y uno o más códigos de los siete existentes, sin repetidos.
+necesita texto efectivo y uno o más IDs existentes en incident_types.json, sin repetidos.
+Los tipos deshabilitados pueden conservar asociaciones para revisión histórica.
 Un tipo puede tener cero, una o varias frases. Se rechazan claves desconocidas,
 claves JSON repetidas, IDs duplicados, tipos inválidos, campos ausentes, versiones
 desconocidas y estructuras incorrectas. Se conserva exactamente el texto Unicode,
@@ -617,8 +811,9 @@ una futura GUI; ninguna vista necesita parsear la presentación humana.
    página actual y texto seleccionado, y guarda la incidencia en SQLite.
 5. Las incidencias se podrán revisar y exportar a una plantilla Excel corporativa.
 
-Los únicos códigos iniciales admitidos serán `TEXT`, `PRON`, `DICC`, `RUID`,
-`RESP`, `INTER` y `OTRO`. Sus reglas de negocio aún no definidas no se presuponen.
+Los tipos iniciales son `TEXT`, `PRON`, `DICC`, `RUID`, `RESP`, `INTER` y `OTRO`.
+La configuración permite añadir otros y cambiar fórmulas/labels; no se presuponen
+otras reglas de negocio.
 
 ## Desarrollo
 
@@ -952,12 +1147,13 @@ es obligatorio elegir uno. El socket predeterminado es `/tmp/audiobook-qc-mpv.so
 No selecciones otro texto al preparar el comando: puedes dejarlo escrito antes
 de seleccionar la frase. No se detecta foco ni ventana activa.
 
-Los únicos códigos son `TEXT`, `PRON`, `DICC`, `RUID`, `RESP`, `INTER` y `OTRO`,
-exactamente en mayúsculas y sin espacios añadidos. Se valida el código **antes
-de consultar las fuentes**, tanto en la CLI como en el coordinador reutilizable.
+Los códigos iniciales son `TEXT`, `PRON`, `DICC`, `RUID`, `RESP`, `INTER` y `OTRO`.
+Se pueden añadir IDs en la configuración, siguiendo `[A-Z][A-Z0-9_]*`. Se exige
+un tipo habilitado **antes de consultar las fuentes**. El coordinador recibe una
+instantánea de catálogo validada; no consulta archivos por su cuenta.
 
 `CapturedIncident` es una dataclass inmutable provisional con `incident_type`
-(enum), `audio_filename`, `audio_path`, `audio_position_seconds` (float nativo),
+(ID de texto estable), `audio_filename`, `audio_path`, `audio_position_seconds` (float nativo),
 `document` (identificador original), `page` (valor D-Bus) y `selected_text`.
 La salida muestra esos datos, tiempo legible y texto exacto con `repr()`.
 El objeto solo existe en memoria: no se guarda ni se exporta nada. No incluye
@@ -994,8 +1190,10 @@ La evidencia real de captura está en
 
 `Incident.from_capture(capture, generic_description=None, custom_comment=None)`
 convierte un `CapturedIncident` en una entidad nueva, sin guardar ni consultar
-aplicaciones. Reutiliza el único enum `IncidentType` existente y conserva todos
-los campos de captura. Añade `id` (None antes de insertar), `created_at`,
+aplicaciones. Conserva el ID de tipo como texto y todos los campos de captura.
+La entidad valida la sintaxis del ID; los casos de uso validan su disponibilidad
+actual. Leer un ID histórico no depende de la configuración. Añade `id` (None
+antes de insertar), `created_at`,
 `updated_at`, descripción genérica, comentario personalizado y `exported=False`.
 Descripción y comentario son columnas separadas, admiten None o texto vacío y
 no se concatenan. `exported` es solo un booleano editable; no se exporta nada ni
@@ -1014,9 +1212,10 @@ devuelve None si no existe; actualizar/eliminar un ID inexistente lanza
 
 El archivo SQLite puede crearse al abrir la conexión, pero **el esquema solo se
 crea mediante `initialize()`**, nunca por un INSERT. Usa una base dedicada al
-proyecto. El esquema es versión 1 mediante `PRAGMA user_version`; inicializar de
-nuevo conserva los datos. Se rechazan versiones desconocidas y bases con tablas
-sin versión reconocida. No hay migraciones todavía.
+proyecto. El esquema nuevo es versión 2 mediante `PRAGMA user_version`; las bases
+v1 se leen/escriben con sus códigos originales. Inicializar de nuevo conserva los
+datos sin migrar. Se rechazan versiones desconocidas y bases con tablas sin versión
+reconocida. La migración v1→v2 solo ocurre con `jobs_cli migrate-types UUID`.
 
 La tabla `incidents` usa ID entero autoincremental y constraints para códigos,
 datos obligatorios no vacíos, posición finita, página entera no negativa y estado
@@ -1082,8 +1281,8 @@ capturados, fechas UTC, `generic_description=null`, `custom_comment=null` y
 No hay inicialización automática: se mantiene el comando `init` de Fase 1 para
 que crear el esquema sea una operación deliberada. Abrir una ruta inexistente
 puede crear un archivo SQLite vacío; el guardado comprueba el esquema después
-de capturar y falla si falta la versión 1 compatible, sin crear tablas. Ejecuta
-`init` antes de capturar. El esquema permanece en versión 1, sin migraciones.
+de capturar y falla si falta una versión compatible (1 o 2), sin crear tablas.
+Ejecuta `init` antes de capturar; usa esquema 2 en bases nuevas.
 
 Los errores de captura, validación o SQLite se notifican en stderr con salida 1,
 sin imprimir una entidad como guardada. Un fallo de captura no llama a `add`;
@@ -1110,7 +1309,8 @@ y límites están en [STEPS.md](STEPS.md#validación-real-de-captura-y-persisten
 
 Se utilizan los **atajos personalizados del escritorio**, que ejecutan un
 proceso breve por pulsación. No hay listener Python, daemon ni biblioteca nueva.
-GNOME detecta la combinación; el código se configura en el comando; la CLI
+GNOME detecta la combinación; el comando identifica el atajo lógico y el JSON
+resuelve su tipo; la CLI
 exige modo activo y foco autorizado, compone los adaptadores y reutiliza
 `capture_and_save_incident`. La comunicación
 usa `notify-send` (libnotify), disponible en el entorno comprobado. El dominio
@@ -1134,10 +1334,10 @@ y [notificaciones del escritorio](https://specifications.freedesktop.org/notific
    Atajos personalizados → +** (los rótulos pueden variar). Añade nombre,
    comando y combinación. No reemplaces los atajos existentes de otras tareas.
 4. En el campo Comando, pega lo siguiente en **una sola línea**, sustituyendo
-   las rutas absolutas y el servicio por los tuyos:
+   la ruta absoluta del intérprete y el atajo lógico:
 
 ```text
-/RUTA/AL/PROYECTO/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop INTER
+/RUTA/AL/PROYECTO/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop --hotkey F6
 ```
 
 No uses `~`, variables de shell, `source`, redirecciones ni `gnome-terminal` en
@@ -1146,10 +1346,12 @@ entorno (`pip install -e '.[dev]'` durante desarrollo). `--desktop` resuelve
 base y fuentes desde el trabajo seleccionado; las rutas técnicas solo se usan
 sin esa opción. `xclip`, `busctl` y `notify-send` deben estar en el PATH de la sesión.
 
-La correspondencia inicial **aceptada y probada por el usuario**, tras
-informarle de los conflictos, es la siguiente. Se edita exclusivamente en GNOME:
+La correspondencia inicial es la siguiente. La combinación física se edita en
+GNOME; el tipo de cada identificador lógico se edita en incident_types.json.
+Las pulsaciones reales documentadas se probaron con el esquema anterior de
+comandos posicionales; los nuevos comandos lógicos se verifican con fuentes simuladas:
 
-| Tecla propuesta | Código en el comando |
+| Atajo lógico | Tipo inicial en JSON |
 | --- | --- |
 | F1 | TEXT |
 | F2 | PRON |

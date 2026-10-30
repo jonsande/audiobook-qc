@@ -12,7 +12,7 @@ import pytest
 
 from audiobook_qc import capture_save_probe, correction_mode, jobs_cli
 from audiobook_qc.capture import CaptureError
-from audiobook_qc.captured_incident import CapturedIncident, IncidentType
+from audiobook_qc.captured_incident import CapturedIncident
 from audiobook_qc.integrations.activation import ActivationBusy
 from audiobook_qc.jobs import JobError, JobStore, NoActiveJob, job_database
 from audiobook_qc.sqlite_repository import SQLiteIncidentRepository
@@ -45,7 +45,7 @@ def desktop(monkeypatch, isolated_desktop_sources):
 
 def captured(code="INTER", text="  parti-\r\nda e\u0301\n"):
     return CapturedIncident(
-        IncidentType(code), "á.mp3", "./á.mp3", 19.300243, "file:///á.pdf", 33, text
+        code, "á.mp3", "./á.mp3", 19.300243, "file:///á.pdf", 33, text
     )
 
 
@@ -179,7 +179,7 @@ def test_invalid_databases_rejected_before_capture_without_initialization(
     else:
         with sqlite3.connect(job_database(job)) as conn:
             if damage == "version":
-                conn.execute("PRAGMA user_version=2")
+                conn.execute("PRAGMA user_version=3")
             else:
                 conn.execute("DROP TABLE incidents")
     before = job_database(job).read_bytes() if job_database(job).is_file() else None
@@ -268,9 +268,9 @@ def test_two_jobs_desktop_capture_isolation_and_exact_data(
     for target, codes in [(job, ["TEXT", "OTRO"]), (b, ["INTER"])]:
         with SQLiteIncidentRepository(job_database(target), existing=True) as repo:
             saved = repo.list()
-        assert [i.incident_type.value for i in saved] == codes
+        assert [i.incident_type for i in saved] == codes
         for incident in saved:
-            expected = captured(incident.incident_type.value)
+            expected = captured(incident.incident_type)
             assert {k: getattr(incident, k) for k in asdict(expected)} == asdict(
                 expected
             )

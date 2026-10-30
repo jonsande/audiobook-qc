@@ -6,10 +6,11 @@ import pytest
 
 from audiobook_qc import capture_probe
 from audiobook_qc.capture import CaptureError, capture_incident
-from audiobook_qc.captured_incident import CapturedIncident, IncidentType
+from audiobook_qc.captured_incident import CapturedIncident
 from audiobook_qc.integrations.mpv import MpvError, MpvState
 from audiobook_qc.integrations.okular import OkularError, OkularState
 from audiobook_qc.integrations.selection import Selection, SelectionError
+from audiobook_qc.type_config import load_types
 
 
 class Sources:
@@ -40,7 +41,11 @@ class Sources:
 
     def capture(self, code: str = "INTER") -> CapturedIncident:
         return capture_incident(
-            code, read_primary=self.primary, read_document=self.pdf, read_audio=self.mpv
+            code,
+            read_primary=self.primary,
+            read_document=self.pdf,
+            read_audio=self.mpv,
+            types=load_types(),
         )
 
 
@@ -51,7 +56,7 @@ def test_capture_preserves_data_and_reads_each_source_once_in_order(code: str) -
     sources = Sources()
     capture = sources.capture(code)
     assert capture == CapturedIncident(
-        IncidentType(code),
+        code,
         "a.wav",
         "/tmp/a.wav",
         1.251234,
@@ -191,9 +196,7 @@ def test_cli_invalid_code_never_starts_capture(monkeypatch: pytest.MonkeyPatch) 
         pytest.fail("No debe iniciar la captura")
 
     monkeypatch.setattr(capture_probe, "capture_incident", unexpected)
-    with pytest.raises(SystemExit) as caught:
-        capture_probe.main(["inter"])
-    assert caught.value.code == 2
+    assert capture_probe.main(["inter"]) == 1
 
 
 def test_cli_capture_error_has_no_traceback(

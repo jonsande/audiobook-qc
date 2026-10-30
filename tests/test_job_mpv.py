@@ -147,6 +147,7 @@ def test_stale_socket_removed_only_by_explicit_launch_check(runtime):
 def test_nonprivate_runtime_namespace_is_rejected(runtime, launcher):
     parent = runtime / "audiobook-qc"
     parent.mkdir(mode=0o755)
+    parent.chmod(0o755)
     with pytest.raises(MpvError, match="privado"):
         job_mpv.launch(str(uuid4()), (), runtime / "mpv.log")
     assert launcher[0] == []

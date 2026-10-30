@@ -5,14 +5,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from audiobook_qc.captured_incident import CapturedIncident, IncidentType
+from audiobook_qc.captured_incident import CapturedIncident
 from audiobook_qc.incident import Incident
 
 
 @pytest.fixture
 def incident() -> Incident:
     return Incident(
-        incident_type=IncidentType.INTER,
+        incident_type="INTER",
         audio_filename="capítulo.mp3",
         audio_path="relative/audio.mp3",
         audio_position_seconds=1104.5171234567,
@@ -48,11 +48,11 @@ def test_conversion_preserves_all_capture_fields(incident: Incident) -> None:
 @pytest.mark.parametrize(
     "code", ["TEXT", "PRON", "DICC", "RUID", "RESP", "INTER", "OTRO"]
 )
-def test_valid_codes_use_existing_enum(code: str, incident: Incident) -> None:
-    assert replace(incident, incident_type=code).incident_type is IncidentType(code)
+def test_valid_type_ids(code: str, incident: Incident) -> None:
+    assert replace(incident, incident_type=code).incident_type == code
 
 
-@pytest.mark.parametrize("code", ["text", " INTER", "INTER ", "", "OTHER", None])
+@pytest.mark.parametrize("code", ["text", " INTER", "INTER ", "", "OTHER-", None])
 def test_invalid_codes(code: object, incident: Incident) -> None:
     with pytest.raises(ValueError):
         replace(incident, incident_type=code)

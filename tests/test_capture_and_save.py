@@ -12,18 +12,19 @@ import pytest
 from audiobook_qc import capture_save_probe
 from audiobook_qc.capture import CaptureError, capture_incident
 from audiobook_qc.capture_and_save import capture_and_save_incident
-from audiobook_qc.captured_incident import CapturedIncident, IncidentType
+from audiobook_qc.captured_incident import CapturedIncident
 from audiobook_qc.incident import Incident
 from audiobook_qc.integrations.mpv import MpvState
 from audiobook_qc.integrations.okular import OkularState
 from audiobook_qc.integrations.selection import Selection, SelectionError
 from audiobook_qc.sqlite_repository import SchemaError, SQLiteIncidentRepository
+from audiobook_qc.type_config import load_types
 
 
 @pytest.fixture
 def captured() -> CapturedIncident:
     return CapturedIncident(
-        IncidentType.INTER,
+        "INTER",
         "capítulo.mp3",
         "relativa/capítulo.mp3",
         1104.5171234567,
@@ -63,7 +64,9 @@ def test_use_case_converts_before_writing_and_returns_repository_result(
         assert writer.received == []
         return captured
 
-    saved = capture_and_save_incident("INTER", capture=capture, repository=writer)
+    saved = capture_and_save_incident(
+        "INTER", capture=capture, repository=writer, types=load_types()
+    )
     assert codes == ["INTER"]
     assert len(writer.received) == 1
     entity = writer.received[0]
@@ -100,14 +103,18 @@ def test_real_capture_pipeline_persists_all_fields_and_sqlite_id(
         )
 
     capture = partial(
-        capture_incident, read_primary=primary, read_document=document, read_audio=audio
+        capture_incident,
+        read_primary=primary,
+        read_document=document,
+        read_audio=audio,
+        types=load_types(),
     )
     with SQLiteIncidentRepository(database) as repository:
         first = capture_and_save_incident(
-            "INTER", capture=capture, repository=repository
+            "INTER", capture=capture, repository=repository, types=load_types()
         )
         second = capture_and_save_incident(
-            "INTER", capture=capture, repository=repository
+            "INTER", capture=capture, repository=repository, types=load_types()
         )
     assert calls == ["primary", "okular", "mpv"] * 2
     assert first.id == 1
@@ -133,7 +140,9 @@ def test_capture_failure_never_calls_writer() -> None:
         raise error
 
     with pytest.raises(CaptureError) as caught:
-        capture_and_save_incident("TEXT", capture=fail, repository=writer)
+        capture_and_save_incident(
+            "TEXT", capture=fail, repository=writer, types=load_types()
+        )
     assert caught.value is error
     assert writer.received == []
 
@@ -142,7 +151,10 @@ def test_conversion_failure_never_calls_writer(captured: CapturedIncident) -> No
     writer = Writer()
     with pytest.raises(ValueError, match="page"):
         capture_and_save_incident(
-            "INTER", capture=lambda code: replace(captured, page=-1), repository=writer
+            "INTER",
+            capture=lambda code: replace(captured, page=-1),
+            repository=writer,
+            types=load_types(),
         )
     assert writer.received == []
 
@@ -156,7 +168,10 @@ def test_persistence_failure_propagates(captured: CapturedIncident) -> None:
 
     with pytest.raises(sqlite3.OperationalError) as caught:
         capture_and_save_incident(
-            "INTER", capture=lambda code: captured, repository=FailingWriter()
+            "INTER",
+            capture=lambda code: captured,
+            repository=FailingWriter(),
+            types=load_types(),
         )
     assert caught.value is error
 
@@ -296,9 +311,12 @@ def test_cli_requires_database_and_valid_code_before_reading_sources(
     args: list[str],
     cli_sources: list[str],
 ) -> None:
-    with pytest.raises(SystemExit) as caught:
-        capture_save_probe.main(args)
-    assert caught.value.code == 2
+    if len(args) == 1:
+        with pytest.raises(SystemExit) as caught:
+            capture_save_probe.main(args)
+        assert caught.value.code == 2
+    else:
+        assert capture_save_probe.main(args) == 1
     assert cli_sources == []
 
 
@@ -311,4 +329,6 @@ def test_use_case_does_not_initialize_schema(
 
     with SQLiteIncidentRepository(tmp_path / "fresh.sqlite3") as repository:
         with pytest.raises(SchemaError):
-            capture_and_save_incident("INTER", capture=capture, repository=repository)
+            capture_and_save_incident(
+                "INTER", capture=capture, repository=repository, types=load_types()
+            )

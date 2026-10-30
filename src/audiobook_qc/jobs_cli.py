@@ -25,6 +25,7 @@ def main(argv: list[str] | None = None) -> int:
     commands.add_parser("create").add_argument("name")
     commands.add_parser("list")
     commands.add_parser("get").add_argument("id")
+    commands.add_parser("migrate-types").add_argument("id")
     commands.add_parser("select").add_argument("id")
     commands.add_parser("active")
     commands.add_parser("clear")
@@ -63,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
                     result = launch_okular(job)
                 else:
                     result = sources_data(job)
+        elif args.action == "migrate-types":
+            with store.destination(args.id) as (job, repository):
+                result = dict(
+                    job=job.id, migrated=repository.migrate_types(), version=2
+                )
         elif args.action == "configure":
             store.configure(args.directory)
             result = store.configuration()

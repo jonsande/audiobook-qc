@@ -5,9 +5,9 @@ import json
 import sys
 from dataclasses import asdict
 
-from audiobook_qc.captured_incident import IncidentType
 from audiobook_qc.description_config import catalog_path, load_catalog
 from audiobook_qc.descriptions import CatalogError
+from audiobook_qc.type_config import load_types
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -16,19 +16,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, parents=[common])
     commands = parser.add_subparsers(dest="action", required=True)
     listing = commands.add_parser("list", parents=[common])
-    listing.add_argument("type", nargs="?", choices=[t.value for t in IncidentType])
+    listing.add_argument("type", nargs="?")
     commands.add_parser("validate", parents=[common])
     args = parser.parse_args(argv)
     try:
         path = catalog_path()
-        catalog = load_catalog(path)
+        types = load_types()
+        catalog = load_catalog(path, types=types)
         result = {"catalog": str(path), "version": 1}
         if args.action == "list":
-            code = IncidentType(args.type) if args.type else None
+            code = types.get(args.type).id if args.type else None
             result["descriptions"] = [asdict(item) for item in catalog.list(code)]
         else:
             result.update(valid=True, count=len(catalog.descriptions))
-    except CatalogError as exc:
+    except (CatalogError, ValueError) as exc:
         print(f"Error de descripciones: {exc}", file=sys.stderr)
         return 1
     if getattr(args, "json", False):

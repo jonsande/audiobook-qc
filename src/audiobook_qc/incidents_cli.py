@@ -7,13 +7,14 @@ import sys
 from dataclasses import asdict
 
 from audiobook_qc.audio_position import format_audio_position
-from audiobook_qc.captured_incident import IncidentType
 from audiobook_qc.description_config import load_catalog
 from audiobook_qc.incident import Incident
 from audiobook_qc.incident_review import EDITABLE_FIELDS, edit_incident, get_incident
 from audiobook_qc.integrations.activation import ActivationBusy
 from audiobook_qc.jobs import JobError, JobStore
 from audiobook_qc.sqlite_repository import IncidentNotFoundError, SchemaError
+from audiobook_qc.type_catalog import TypeCatalog, TypeConfigError
+from audiobook_qc.type_config import load_types
 
 
 def _positive_id(value: str) -> int:
@@ -26,9 +27,18 @@ def _positive_id(value: str) -> int:
         raise argparse.ArgumentTypeError("El ID debe ser un entero positivo.") from exc
 
 
-def incident_data(incident: Incident) -> dict:
+def incident_data(incident: Incident, types: TypeCatalog | None = None) -> dict:
     data = asdict(incident)
-    data["incident_type"] = incident.incident_type.value
+    data["incident_type_info"] = (
+        types.historical_info(incident.incident_type)
+        if types is not None
+        else dict(
+            id=incident.incident_type,
+            label=incident.incident_type,
+            enabled=None,
+            status="unavailable",
+        )
+    )
     for name in ("created_at", "updated_at"):
         data[name] = getattr(incident, name).isoformat(timespec="microseconds")
     return dict(
@@ -48,6 +58,8 @@ def _summary(value: str | None, limit: int = 64) -> str:
 
 def _human(result: dict) -> str:
     header = f"Trabajo: {result['job']['name']} ({result['job']['id']})"
+    if "type_configuration_error" in result:
+        header += "\nAviso: " + result["type_configuration_error"]
     if "incidents" in result:
         rows = [
             header,
@@ -59,7 +71,12 @@ def _human(result: dict) -> str:
                 " | ".join(
                     (
                         str(item["id"]),
-                        item["incident_type"],
+                        item["incident_type"]
+                        + " ("
+                        + item["incident_type_info"]["label"]
+                        + "; "
+                        + item["incident_type_info"]["status"]
+                        + ")",
                         _summary(item["audio_filename"]),
                         item["audio_position_formatted"],
                         str(item["page"]),
@@ -118,7 +135,7 @@ def _parser() -> argparse.ArgumentParser:
     edit.add_argument(
         "--type",
         dest="incident_type",
-        choices=[c.value for c in IncidentType],
+        help="ID habilitado en incident_types.json.",
         default=argparse.SUPPRESS,
     )
     edit.add_argument(
@@ -146,6 +163,7 @@ def _parser() -> argparse.ArgumentParser:
         group = edit.add_mutually_exclusive_group()
         if field == "generic_description":
             group.add_argument("--generic-description-id", default=argparse.SUPPRESS)
+            group.add_argument("--default-description", action="store_true")
         group.add_argument(
             *options,
             dest=field,
@@ -170,14 +188,31 @@ def main(argv: list[str] | None = None) -> int:
         key: value for key, value in vars(args).items() if key in EDITABLE_FIELDS
     }
     description_id = getattr(args, "generic_description_id", None)
-    if args.action == "edit" and not changes and description_id is None:
+    default_description = getattr(args, "default_description", False)
+    if (
+        args.action == "edit"
+        and not changes
+        and description_id is None
+        and not default_description
+    ):
         parser.error("Indica al menos un campo editable.")
     try:
         with JobStore().destination(getattr(args, "job", None)) as (job, repository):
             result = {"job": {"id": job.id, "name": job.name}}
+            try:
+                types = load_types()
+            except TypeConfigError as exc:
+                if (
+                    "incident_type" in changes
+                    or default_description
+                    or description_id is not None
+                ):
+                    raise
+                types = None
+                result["type_configuration_error"] = str(exc)
             if args.action == "list":
                 result["incidents"] = [
-                    incident_data(item) for item in repository.list()
+                    incident_data(item, types) for item in repository.list()
                 ]
             else:
                 incident = (
@@ -185,13 +220,17 @@ def main(argv: list[str] | None = None) -> int:
                         repository,
                         args.id,
                         changes,
-                        catalog=load_catalog() if description_id is not None else None,
+                        catalog=load_catalog(types=types)
+                        if description_id is not None
+                        else None,
                         description_id=description_id,
+                        types=types,
+                        default_description=default_description,
                     )
                     if args.action == "edit"
                     else get_incident(repository, args.id)
                 )
-                result["incident"] = incident_data(incident)
+                result["incident"] = incident_data(incident, types)
     except (
         JobError,
         ActivationBusy,

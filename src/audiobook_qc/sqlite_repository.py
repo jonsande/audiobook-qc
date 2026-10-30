@@ -5,11 +5,10 @@ from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
 
-from audiobook_qc.captured_incident import IncidentType
 from audiobook_qc.incident import Incident, utc_now
 
-SCHEMA_VERSION = 1
-_CODES = ", ".join(f"'{code.value}'" for code in IncidentType)
+SCHEMA_VERSION = 2
+SUPPORTED_VERSIONS = (1, 2)
 _FIELDS = (
     "incident_type",
     "audio_filename",
@@ -35,19 +34,24 @@ class IncidentNotFoundError(LookupError):
 def initialize_schema(connection: sqlite3.Connection) -> None:
     """Inicializa una base vacía o verifica la versión; no migra ni reemplaza tablas."""
     version = connection.execute("PRAGMA user_version").fetchone()[0]
-    if version == SCHEMA_VERSION:
+    if version in SUPPORTED_VERSIONS:
         return
     if version != 0:
         raise SchemaError(f"Versión SQLite no compatible: {version}.")
     existing = connection.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*'"
     ).fetchone()
     if existing:
         raise SchemaError("La base contiene tablas sin una versión reconocida.")
     with connection:
         connection.execute("BEGIN IMMEDIATE")
-        connection.execute(f"""
-            CREATE TABLE incidents (
+        connection.execute(_table_sql("incidents"))
+        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+
+
+def _table_sql(name: str) -> str:
+    return f"""
+            CREATE TABLE {name} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id>0),
                 created_at TEXT NOT NULL CHECK (
                     length(created_at)=32 AND substr(created_at,27)='+00:00'
@@ -55,7 +59,10 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
                 updated_at TEXT NOT NULL CHECK (
                     length(updated_at)=32 AND substr(updated_at,27)='+00:00'
                     AND julianday(updated_at) IS NOT NULL),
-                incident_type TEXT NOT NULL CHECK (incident_type IN ({_CODES})),
+                incident_type TEXT NOT NULL CHECK (
+                    typeof(incident_type)='text' AND length(incident_type)>0
+                    AND substr(incident_type,1,1) GLOB '[A-Z]'
+                    AND incident_type NOT GLOB '*[^A-Z0-9_]*'),
                 audio_filename TEXT NOT NULL CHECK (
                     typeof(audio_filename)='text' AND audio_filename <> ''),
                 audio_path TEXT NOT NULL CHECK (
@@ -76,13 +83,12 @@ def initialize_schema(connection: sqlite3.Connection) -> None:
                 exported INTEGER NOT NULL DEFAULT 0 CHECK (
                     typeof(exported)='integer' AND exported IN (0,1))
             )
-        """)
-        connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+        """
 
 
 def _values(incident: Incident) -> tuple[object, ...]:
     return (
-        incident.incident_type.value,
+        incident.incident_type,
         incident.audio_filename,
         incident.audio_path,
         incident.audio_position_seconds,
@@ -100,7 +106,7 @@ def _from_row(row: sqlite3.Row) -> Incident:
         id=row["id"],
         created_at=datetime.fromisoformat(row["created_at"]),
         updated_at=datetime.fromisoformat(row["updated_at"]),
-        incident_type=IncidentType(row["incident_type"]),
+        incident_type=row["incident_type"],
         audio_filename=row["audio_filename"],
         audio_path=row["audio_path"],
         audio_position_seconds=row["audio_position_seconds"],
@@ -147,15 +153,79 @@ class SQLiteIncidentRepository:
 
     def _ensure_schema(self) -> None:
         version = self._connection.execute("PRAGMA user_version").fetchone()[0]
-        if version != SCHEMA_VERSION:
+        if version not in SUPPORTED_VERSIONS:
             raise SchemaError(
-                "Inicializa explícitamente una base compatible (versión 1)."
+                "Inicializa explícitamente una base compatible (versión 1 o 2)."
+            )
+
+    def migrate_types(self) -> bool:
+        """Migración explícita v1→v2, atómica; conserva filas, fechas y secuencia.
+
+        No se ejecuta desde initialize, validate_schema, lecturas ni escrituras.
+        El llamador debe mantener el mismo bloqueo que las capturas del trabajo.
+        """
+        self.validate_schema()
+        if self._connection.execute("PRAGMA user_version").fetchone()[0] == 2:
+            return False
+        with self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            # No perder objetos añadidos por otros programas al reconstruir la tabla.
+            unexpected = self._connection.execute(
+                "SELECT name FROM sqlite_master WHERE name NOT GLOB 'sqlite_*' "
+                "AND NOT (type='table' AND name='incidents')"
+            ).fetchall()
+            if unexpected:
+                raise SchemaError(
+                    "Migración rechazada: hay objetos SQLite adicionales."
+                )
+            expected = {"id", "created_at", "updated_at", *_FIELDS}
+            columns = self._connection.execute(
+                "PRAGMA table_info(incidents)"
+            ).fetchall()
+            if {row["name"] for row in columns} != expected:
+                raise SchemaError("Migración rechazada: columnas inesperadas.")
+            self.list()  # validar entidades históricas antes de reconstruir
+            sequence = self._connection.execute(
+                "SELECT seq FROM sqlite_sequence WHERE name='incidents'"
+            ).fetchone()
+            self._connection.execute(_table_sql("incidents_v2"))
+            fields = ", ".join(("id", "created_at", "updated_at", *_FIELDS))
+            self._connection.execute(
+                f"INSERT INTO incidents_v2 ({fields}) SELECT {fields} FROM incidents"
+            )
+            self._connection.execute("DROP TABLE incidents")
+            self._connection.execute("ALTER TABLE incidents_v2 RENAME TO incidents")
+            if sequence is not None:
+                self._connection.execute(
+                    "UPDATE sqlite_sequence SET seq=? WHERE name='incidents'",
+                    (sequence["seq"],),
+                )
+            self._connection.execute("PRAGMA user_version=2")
+        return True
+
+    def _check_type_storage(self, identifier: str) -> None:
+        # El esquema legado sigue siendo utilizable con sus tipos originales.
+        # La lista pertenece solo a compatibilidad de almacenamiento v1.
+        version = self._connection.execute("PRAGMA user_version").fetchone()[0]
+        if version == 1 and identifier not in (
+            "TEXT",
+            "PRON",
+            "DICC",
+            "RUID",
+            "RESP",
+            "INTER",
+            "OTRO",
+        ):
+            raise SchemaError(
+                "Este tipo requiere migración explícita SQLite v1→v2: "
+                "python -m audiobook_qc.jobs_cli migrate-types UUID."
             )
 
     def add(self, incident: Incident) -> Incident:
         self._ensure_schema()
         if incident.id is not None:
             raise ValueError("add requiere una incidencia nueva sin id.")
+        self._check_type_storage(incident.incident_type)
         # Una entidad nueva empieza con ambas fechas iguales.
         incident = replace(incident, updated_at=incident.created_at)
         columns = ", ".join(_FIELDS)
@@ -190,6 +260,7 @@ class SQLiteIncidentRepository:
         self._ensure_schema()
         if incident.id is None:
             raise ValueError("update requiere una incidencia con id.")
+        self._check_type_storage(incident.incident_type)
         with self._connection:
             stored = self.get(incident.id)
             if stored is None:

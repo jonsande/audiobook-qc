@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from audiobook_qc import capture_save_probe, correction_mode
-from audiobook_qc.captured_incident import CapturedIncident, IncidentType
+from audiobook_qc.captured_incident import CapturedIncident
 from audiobook_qc.desktop_policy import ActivationRejected, require_correction_context
 from audiobook_qc.integrations import focus
 from audiobook_qc.jobs import JobStore, job_database
@@ -411,7 +411,7 @@ def test_active_mode_and_allowed_focus_preserve_integrated_capture_and_save(
     correction_mode.set_active(True)
     monkeypatch.setattr(capture_save_probe, "active_application", lambda: application)
     captured = CapturedIncident(
-        IncidentType.INTER,
+        "INTER",
         "a.wav",
         "./a.wav",
         19.300243,

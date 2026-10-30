@@ -13,6 +13,7 @@ from audiobook_qc.sqlite_repository import (
     SchemaError,
     SQLiteIncidentRepository,
 )
+from audiobook_qc.type_config import load_types
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,7 +37,7 @@ def main(argv: list[str] | None = None) -> int:
         with SQLiteIncidentRepository(args.db) as repository:
             if args.command == "init":
                 repository.initialize()
-                print("Esquema SQLite inicializado (versión 1).")
+                print("Esquema SQLite verificado (versiones 1/2; nuevas bases v2).")
                 return 0
             if args.command == "add":
                 payload = json.load(sys.stdin)
@@ -58,6 +59,7 @@ def main(argv: list[str] | None = None) -> int:
                     generic_description=args.generic_description,
                     custom_comment=args.custom_comment,
                 )
+                load_types().require_enabled(incident.incident_type)
                 incident = repository.add(incident)
             else:
                 incident = repository.get(args.id)

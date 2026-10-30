@@ -4,7 +4,8 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from audiobook_qc.captured_incident import CapturedIncident, IncidentType
+from audiobook_qc.captured_incident import CapturedIncident
+from audiobook_qc.type_catalog import validate_type_id
 
 
 def utc_now() -> datetime:
@@ -13,7 +14,7 @@ def utc_now() -> datetime:
 
 @dataclass(frozen=True)
 class Incident:
-    incident_type: IncidentType
+    incident_type: str
     audio_filename: str
     audio_path: str
     audio_position_seconds: float
@@ -46,7 +47,7 @@ class Incident:
         return separator.join(self.editorial_components)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "incident_type", IncidentType(self.incident_type))
+        validate_type_id(self.incident_type)
         for name in ("audio_filename", "audio_path", "document", "selected_text"):
             value = getattr(self, name)
             if not isinstance(value, str) or value == "":

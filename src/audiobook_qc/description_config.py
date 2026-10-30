@@ -4,12 +4,13 @@ import json
 import os
 from pathlib import Path
 
-from audiobook_qc.captured_incident import IncidentType
 from audiobook_qc.descriptions import (
     CatalogError,
     DescriptionCatalog,
     GenericDescription,
 )
+from audiobook_qc.type_catalog import TypeCatalog
+from audiobook_qc.type_config import load_types
 
 
 def catalog_path() -> Path:
@@ -28,7 +29,9 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict:
     return result
 
 
-def load_catalog(path: Path | None = None) -> DescriptionCatalog:
+def load_catalog(
+    path: Path | None = None, *, types: TypeCatalog | None = None
+) -> DescriptionCatalog:
     target = path if path is not None else catalog_path()
     try:
         data = json.loads(
@@ -42,6 +45,7 @@ def load_catalog(path: Path | None = None) -> DescriptionCatalog:
             or not isinstance(data["descriptions"], list)
         ):
             raise CatalogError("Se requiere version: 1 y descriptions: lista.")
+        type_catalog = types if types is not None else load_types()
         entries = []
         for item in data["descriptions"]:
             if (
@@ -53,11 +57,13 @@ def load_catalog(path: Path | None = None) -> DescriptionCatalog:
                 raise CatalogError(
                     "Entrada inválida: requiere id, text e incident_types."
                 )
+            for identifier in item["incident_types"]:
+                type_catalog.get(identifier)
             entries.append(
                 GenericDescription(
                     item["id"],
                     item["text"],
-                    tuple(IncidentType(t) for t in item["incident_types"]),
+                    tuple(item["incident_types"]),
                 )
             )
         return DescriptionCatalog(tuple(entries))
