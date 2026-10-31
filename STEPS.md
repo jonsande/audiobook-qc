@@ -1283,6 +1283,51 @@ pendiente manual: aplicar los comandos documentados, reasignar bindings y confir
 que F2 usa PRON/DICC al cambiar solo JSON, con modo/foco y trabajo autorizados.
 Las validaciones previas de fuentes/selección conservan sus límites experimentales.
 
+## Migración segura de comandos GNOME — Prompt 025
+
+**Estado:** implementación y validación aislada; ninguna migración GNOME real.
+Resuelve la condición de parada documentada en el informe del prompt 024 sin
+modificar `_desired()` ni aceptar cambios arbitrarios de órdenes suspendidas.
+
+`shortcut_migration.py` coordina un backend sustituible y el journal existente.
+Autoriza solo los siete comandos canónicos posicionales → `--hotkey F1…F7`,
+con intérprete absoluto idéntico, modo off, bindings vacíos, catálogo/mapa inicial
+válidos y journal completo con Fn suspendidas. Conserva nombres/rutas y atajos
+ajenos. Nunca escribe bindings, indicador, SQLite, selección ni fuentes.
+
+`migration_state.py` publica intención/progreso mediante archivos privados,
+reemplazo/enlace exclusivo y fsync de archivo/directorio. El registro incluye el
+snapshot anterior completo, huella y cada intento antes del set. Las fases
+prepared/commands/journal/complete y recovering/rolled_back sobreviven a una
+interrupción; status contrasta lo observado con los dos estados permitidos.
+La recuperación explícita restaura comandos y texto original del journal sin
+perder Fn; se detiene ante modificaciones externas. No hay transacción global
+GSettings/JSON ni compare-and-swap frente a escritores no cooperativos.
+
+`shortcut_migration_cli plan/apply/status/recover` ofrece diagnóstico JSON;
+apply/recover exigen --execute y --confirm HUELLA. Una intención pendiente impide
+on/off/status ordinarios antes de tocar el journal o validar fuentes, evitando
+su limpieza destructiva en estados parciales. Sin intención pendiente, on/off
+conservan su comportamiento anterior. La CLI toma journal.lock → jobs.lock sin
+abrir bases ni llamar CLI que readquieran esos locks. No borra registros al
+terminar ni repite automáticamente una migración previa.
+
+**Verificación:** tests persistentes con backend de escritorio en memoria,
+journal/catálogo temporales, fallos de set/persistencia/fsync, interrupciones y
+recuperación parcial; rechazo de diferencias de modo, bindings, comandos,
+journal, catálogo y cambios concurrentes. Incluye ciclo on/status/off posterior,
+custom0 intacto, orden de tipos/fórmulas independientes y conservación de las
+validaciones anteriores. **786 tests superados** (696 previos y 90 nuevos), Ruff
+lint/formato (64 archivos) y git diff --check correctos. Los resultados y evidencia
+de conservación
+del entorno real se registran en INFORME_IMPLEMENTACION_MIGRACION_GNOME.md.
+
+**Criterio productivo pendiente:** respaldos nuevos local e independiente,
+ventana sin escritores externos, ejecución confirmada sobre GNOME real,
+verificación on/status/off con fuentes válidas y pruebas físicas posteriores
+autorizadas. No se presenta este código ni los tests como migración real,
+liberación física de teclas o prueba de mpv/Okular completadas.
+
 ## Fase 3: exportación a plantilla Excel corporativa
 
 **BLOQUEADA: no implementar hasta disponer de una muestra de la plantilla Excel

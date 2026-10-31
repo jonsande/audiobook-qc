@@ -101,3 +101,22 @@ class GSettingsShortcuts:
         self._run("set", CUSTOM_SCHEMA + expected.path, "binding", repr(binding))
         if self.read(expected.path) != replace(expected, binding=binding):
             raise ShortcutError("No se pudo confirmar la escritura de binding.")
+
+    def write_command(self, expected: Shortcut, command: str) -> None:
+        """Escritura condicionada para el coordinador de migración explícita.
+
+        La autorización limitada de la conversión pertenece al coordinador.
+        Aquí nunca se reserva una tecla ni se cambian nombres/lista global.
+        """
+        target = replace(expected, command=command)
+        if (
+            expected.binding
+            or not expected.owned
+            or not target.owned
+            or expected.path not in self.paths()
+            or self.read(expected.path) != expected
+        ):
+            raise ShortcutError("El atajo cambió; no se escribe su comando.")
+        self._run("set", CUSTOM_SCHEMA + expected.path, "command", repr(command))
+        if self.read(expected.path) != target:
+            raise ShortcutError("No se pudo confirmar la escritura de command.")

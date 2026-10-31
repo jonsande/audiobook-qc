@@ -12,6 +12,7 @@ from audiobook_qc.integrations.gnome_shortcuts import GSettingsShortcuts, Shortc
 from audiobook_qc.integrations.notifications import NotificationError, notify
 from audiobook_qc.job_sources import SourceError, prepare_job_sources
 from audiobook_qc.jobs import JobError, JobStore
+from audiobook_qc.migration_state import MigrationStateFile
 from audiobook_qc.shortcut_mode import BindingJournal, ShortcutMode
 
 
@@ -87,6 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         journal = BindingJournal()
         controller = make_controller(journal)
         with journal.lock():
+            MigrationStateFile(journal.path).ensure_idle()
             if args.action == "on":
                 # La selección no puede cambiar entre validación y modo activo.
                 with JobStore().destination() as (job, _):

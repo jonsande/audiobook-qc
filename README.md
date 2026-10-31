@@ -92,10 +92,10 @@ comandos antiguos para que sigan la selección. El escritorio rechaza los overri
 de fuentes; las CLI técnicas sin `--desktop` los conservan. Por
 compatibilidad, si se conserva, se exige que coincida con la base del trabajo
 seleccionado; nunca autoriza escribir en otro destino. Para editar comandos
-suspendidos: ejecuta `off`, cambia los comandos en GNOME y vuelve a asignar
-explícitamente sus combinaciones antes de `on`. La protección del journal de
-bindings rechaza cambios de comando suspendidos sin una nueva combinación;
-no edites `gnome-bindings.json` para eludirla. No se actualizan automáticamente
+suspendidos al catálogo configurable: usa la operación explícita descrita abajo.
+La protección del journal rechaza otros cambios de comando suspendidos sin una
+nueva combinación; no edites `gnome-bindings.json` para eludirla.
+No se actualizan automáticamente
 los atajos reales ni la configuración personal durante la instalación o tests.
 
 `on` valida la selección y la base antes de restaurar bindings o activar el
@@ -351,21 +351,101 @@ Para este repositorio, por ejemplo, el comando de F2 es exactamente:
 /home/jon/prog/python/audiobook-qc/.venv/bin/python -m audiobook_qc.capture_save_probe --desktop --hotkey F2
 ```
 
-Antes de pegar los comandos: instala/valida tipos, revisa el mapa con
-`types_cli hotkeys`, ejecuta `python -m audiobook_qc.correction_mode off --notify`
-y guarda una copia de las entradas anteriores. En Configuración → Teclado →
-Atajos personalizados, cambia el comando de cada entrada y vuelve a asignarle su
-combinación F1–F7 explícitamente. Retira `--db`, `--mpv-socket`, `--okular-service`
-y el tipo posicional. No cambies entradas ajenas. Finalmente:
+Para entradas nuevas, revisa los comandos y combinaciones antes de configurarlas.
+Para las siete entradas posicionales ya suspendidas con F1–F7, usa la migración
+explícita siguiente: no asignes bindings manualmente con el indicador inactivo.
+El procedimiento manual anterior no cumple esa precaución.
+
+### Migración explícita y recuperable de comandos GNOME (Prompt 025)
+
+Implementada y probada **solo con escritorio simulado**. No se ha ejecutado en
+GNOME real. Convierte exclusivamente TEXT/PRON/DICC/RUID/RESP/INTER/OTRO de los
+siete comandos canónicos posicionales en `--hotkey F1` hasta F7, con el mismo
+intérprete absoluto. Mantiene nombres/rutas y bindings vacíos. No toca SQLite,
+selección o fuentes, no activa el modo ni consulta mpv/Okular.
+
+Exige modo inactivo, exactamente siete entradas propias, comandos canónicos,
+journal íntegro con esos comandos y F1–F7 suspendidas, mapa inicial válido y
+ausencia de un registro de migración previo. El orden de tipos y las fórmulas
+no determinan los atajos. Rechaza wrappers, overrides y comandos arbitrarios.
+Planificar no escribe GSettings/journal; puede crear los archivos de lock.
+
+**Comandos futuros para una intervención autorizada.** Primero prepara respaldo
+nuevo verificado de configuración/estado y GSettings, con segunda copia en soporte
+independiente como indican los informes 022–024. Revisa conflictos y establece
+una ventana sin editores/escritores externos. AQ_PLAN debe ser un archivo nuevo
+dentro del respaldo persistente:
 
 ```bash
-python -m audiobook_qc.types_cli validate
-python -m audiobook_qc.types_cli hotkeys --json
-python -m audiobook_qc.correction_mode on --notify
+AQ_PY=/home/jon/prog/python/audiobook-qc/.venv/bin/python
+# Sustituye esta ruta por un archivo nuevo en el respaldo de esa intervención.
+AQ_PLAN=/ruta/persistente/nueva/plan-migracion.json
+( set -C; "$AQ_PY" -m audiobook_qc.shortcut_migration_cli plan --interpreter "$AQ_PY" > "$AQ_PLAN" )
+cat "$AQ_PLAN"
 ```
 
-Haz la edición manual con `off`, siguiendo la restauración de combinaciones del
-journal descrita arriba. El programa no migra GSettings automáticamente.
+Revisa las entradas completas antes de continuar. La ejecución exige --execute y
+la huella exacta de ese snapshot. Un cambio entre plan y apply invalida el token:
+
+```bash
+AQ_TOKEN=$("$AQ_PY" -c 'import json,sys; print(json.load(sys.stdin)["token"])' < "$AQ_PLAN")
+"$AQ_PY" -m audiobook_qc.shortcut_migration_cli apply --interpreter "$AQ_PY" --confirm "$AQ_TOKEN" --execute
+"$AQ_PY" -m audiobook_qc.shortcut_migration_cli status
+```
+
+Se guarda `gnome-bindings.migration.json` junto al journal bajo XDG_STATE_HOME
+(fallback `~/.local/state/audiobook-qc`). Contiene snapshot anterior, catálogo,
+huella, fase e intentos de escritura. Se sincroniza cada intento antes del set;
+la observación identifica el efecto incluso tras morir justo después de escribir.
+No borres el registro ni repitas apply tras un fallo. GSettings y JSON no forman
+una transacción atómica.
+
+Fases: prepared → commands → journal → complete. El journal nuevo conserva Fn y
+suspended=true. Una fase pendiente bloquea on/off/status ordinarios para evitar
+activación o pérdida del mapa; usa status de migración. Su JSON informa phase,
+pending, attempted y changed; añade error ante discrepancias. Salida 1 indica
+rechazo o estado pendiente/incoherente; 2, argumentos inválidos.
+
+Para recuperar un estado parcial o revertir complete, con modo off:
+
+```bash
+"$AQ_PY" -m audiobook_qc.shortcut_migration_cli status
+"$AQ_PY" -m audiobook_qc.shortcut_migration_cli recover --confirm "$AQ_TOKEN" --execute
+```
+
+Recuperar no necesita que el catálogo actual siga válido. Solo acepta estados de
+command/journal anterior o nuevo previstos; restaura comandos y texto original
+del journal, sin reservar teclas. Si falla queda recovering, explícitamente
+pendiente; tras diagnosticar puede repetirse recover con la misma huella.
+Cambios externos de nombre, binding, lista, comando o journal detienen la
+recuperación sin sobrescribirlos. No fuerza un modo inesperadamente activo a
+off: ese caso requiere revisión antes de recuperar.
+
+Los registros complete/rolled_back se conservan como evidencia y bloquean otro
+apply. Una nueva intervención requiere revisar y archivar explícitamente el
+registro terminal con su respaldo; no hay limpieza automática. Nunca restaures
+árboles completos, bases, locks, sockets o indicadores antiguos para revertir.
+
+La CLI toma locks journal → jobs, sin abrir bases ni llamar otras CLI que los
+readquieran. jobs.lock excluye capturas en curso de la aplicación y off rechaza
+nuevas pulsaciones. Los escritores técnicos externos deben estar detenidos.
+GSettings no tiene compare-and-swap: una edición no cooperativa entre lectura
+y set puede escapar al control. Se requiere mantenimiento sin editores externos;
+no se promete protección contra procesos hostiles del mismo usuario.
+
+Tras complete, revisa entradas/journal y fuentes antes de activar deliberadamente.
+Libera locks externos antes de las CLI ordinarias. Si faltan fuentes, detente:
+
+```bash
+"$AQ_PY" -m audiobook_qc.types_cli validate
+"$AQ_PY" -m audiobook_qc.types_cli hotkeys --json
+"$AQ_PY" -m audiobook_qc.correction_mode on --notify
+"$AQ_PY" -m audiobook_qc.correction_mode status
+"$AQ_PY" -m audiobook_qc.correction_mode off --notify
+```
+
+Termina off y sin capturas ficticias en trabajos reales. El programa no migra
+GSettings por instalar/actualizar ni por invocar on/off/status.
 Sin fuentes disponibles, `on` falla antes de restaurar bindings; si desaparecen
 con el modo ya activo, las nuevas pulsaciones fallan sin escritura ni fallback.
 La CLI técnica sin `--desktop` conserva `--db`, `--mpv-socket` y `--okular-service`.
@@ -1555,8 +1635,10 @@ El descubrimiento lee `custom-keybindings` y reconoce el comando directo
 `python[versión] -m audiobook_qc.capture_save_probe ... --desktop ...`. No usa
 índices fijos, nombres visibles ni la combinación F1–F7 como identificación.
 Los comandos con wrappers/shell no se gestionan: usa el comando directo mostrado
-en configuración. Solo se escribe la propiedad `binding`; ni la lista de
-entradas, ni los nombres ni los comandos se modifican. Se vuelve a leer cada
+en configuración. Los controles ordinarios solo escriben `binding`; ni la lista
+de entradas, ni los nombres ni los comandos se modifican desde on/off/status.
+La migración explícita anterior dispone de escritura condicionada de command.
+Se vuelve a leer cada
 entrada antes de escribir y después para detectar cambios concurrentes.
 
 La copia versionada vive en

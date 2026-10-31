@@ -15,6 +15,7 @@ from audiobook_qc.integrations.gnome_shortcuts import (
     Shortcut,
     ShortcutError,
 )
+from audiobook_qc.migration_state import MigrationStateFile
 
 
 class Bindings(Protocol):
@@ -165,6 +166,7 @@ class ShortcutMode:
         return ""  # Desactivado manualmente, o entrada nueva vacía.
 
     def off(self) -> None:
+        MigrationStateFile(self.journal.path).ensure_idle()
         errors: list[str] = []
         try:
             self.set_mode(False)  # Nunca seguir capturando mientras se liberan teclas.
@@ -203,6 +205,7 @@ class ShortcutMode:
             )
 
     def on(self) -> None:
+        MigrationStateFile(self.journal.path).ensure_idle()
         self.set_mode(False)
         try:
             records = self.journal.load()
@@ -276,6 +279,7 @@ class ShortcutMode:
             raise
 
     def status(self, active: bool) -> tuple[str, bool]:
+        MigrationStateFile(self.journal.path).ensure_idle()
         records = self.journal.load()
         errors: list[str] = []
         entries = self._entries(errors)
