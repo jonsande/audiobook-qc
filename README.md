@@ -18,6 +18,25 @@ instálala explícitamente con `python -m audiobook_qc.types_cli init` antes de 
 El roadmap está en [STEPS.md](STEPS.md) y
 las reglas de desarrollo en [AGENTS.md](AGENTS.md).
 
+El bloque GNOME del catálogo configurable está **validado en GNOME/X11**:
+migración real complete (026), ciclo on/status/off (027) y siete capturas físicas
+F1–F7 en un trabajo aislado (028). Se verificaron tipos, fuentes, selección,
+destino, avisos y rechazos por foco ajeno/fuente fallida; off devolvió F1 a Okular.
+Los cuatro trabajos anteriores conservaron sus 13 incidencias; el ensayo conserva
+las siete nuevas. Véanse los informes
+[026](INFORME_EJECUCION_MIGRACION_GNOME.md),
+[027](INFORME_VALIDACION_MODO_CORRECCION_REAL.md) y
+[028](INFORME_VALIDACION_FISICA_ATAJOS.md).
+No implica soporte Wayland, Windows o macOS: PRIMARY sigue siendo global,
+persistente y sin garantía de procedencia/vigencia, y las lecturas no son atómicas.
+Cerrar mpv deja indisponible su IPC aunque el trabajo siga seleccionado; una
+captura falla sin escritura. Antes de on hay que preparar de nuevo las fuentes
+con las CLI existentes; relanzar no recupera el capítulo/timestamp anterior.
+
+El siguiente bloque propuesto es la interfaz de gestión y revisión, descrita en
+[PROPUESTA_ARQUITECTURA_GUI.md](PROPUESTA_ARQUITECTURA_GUI.md). No hay GUI
+implementada ni biblioteca elegida. Excel sigue bloqueado por falta de plantilla.
+
 ## Trabajos de corrección y almacenamiento configurable (Prompt 013)
 
 Cada trabajo representa un audiolibro y tiene UUID estable, título, fecha UTC y
@@ -358,8 +377,9 @@ El procedimiento manual anterior no cumple esa precaución.
 
 ### Migración explícita y recuperable de comandos GNOME (Prompt 025)
 
-Implementada y probada **solo con escritorio simulado**. No se ha ejecutado en
-GNOME real. Convierte exclusivamente TEXT/PRON/DICC/RUID/RESP/INTER/OTRO de los
+Implementada en 025 y ejecutada en GNOME real en 026; el ciclo del modo y las
+capturas físicas posteriores están validados en 027–028. Convierte exclusivamente
+TEXT/PRON/DICC/RUID/RESP/INTER/OTRO de los
 siete comandos canónicos posicionales en `--hotkey F1` hasta F7, con el mismo
 intérprete absoluto. Mantiene nombres/rutas y bindings vacíos. No toca SQLite,
 selección o fuentes, no activa el modo ni consulta mpv/Okular.
@@ -370,14 +390,16 @@ ausencia de un registro de migración previo. El orden de tipos y las fórmulas
 no determinan los atajos. Rechaza wrappers, overrides y comandos arbitrarios.
 Planificar no escribe GSettings/journal; puede crear los archivos de lock.
 
-**Comandos futuros para una intervención autorizada.** Primero prepara respaldo
+**Procedimiento para otra instalación aún no migrada, previa revisión.** En la
+instalación validada el registro ya está complete: no repitas apply ni borres el
+registro. Primero prepara respaldo
 nuevo verificado de configuración/estado y GSettings, con segunda copia en soporte
 independiente como indican los informes 022–024. Revisa conflictos y establece
 una ventana sin editores/escritores externos. AQ_PLAN debe ser un archivo nuevo
 dentro del respaldo persistente:
 
 ```bash
-AQ_PY=/home/jon/prog/python/audiobook-qc/.venv/bin/python
+AQ_PY=/RUTA/AL/PROYECTO/.venv/bin/python
 # Sustituye esta ruta por un archivo nuevo en el respaldo de esa intervención.
 AQ_PLAN=/ruta/persistente/nueva/plan-migracion.json
 ( set -C; "$AQ_PY" -m audiobook_qc.shortcut_migration_cli plan --interpreter "$AQ_PY" > "$AQ_PLAN" )
@@ -779,8 +801,9 @@ correctos. Integración en procesos independientes con captura simulada y SQLite
 real: F2 PRON→DICC, RESP deshabilitado con historial legible, MUSI desde F7,
 fórmulas históricas preservadas y trabajo B idéntico byte a byte. Evidencia en
 `/tmp/audiobook-qc-types-integration-u2hgmeo1/verification.json`.
-La nueva migración de comandos GNOME queda pendiente de verificación física;
-esta tarea no modificó GSettings ni migró trabajos reales.
+Esa tarea no modificó GSettings ni migró trabajos reales. La migración GNOME y
+su verificación física posterior se completaron en 026–028 con el mapa inicial;
+las reasignaciones alternativas descritas aquí se comprobaron con datos aislados.
 
 ## Descripciones genéricas configurables
 

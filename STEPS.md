@@ -15,6 +15,15 @@ trabajos antiguos. Sus resultados se registran antes de la Fase 3. Las notas de
 enum/catálogos provisionales/esquema fijo en fases anteriores son evidencia
 histórica y quedan sustituidas en esos aspectos por esta ampliación.
 
+El bloque GNOME del catálogo configurable quedó validado el 31 de octubre de
+2026: migración real complete (026), on/status/off real (027) y siete capturas
+físicas F1–F7 en ensayo aislado (028), con avisos confirmados por el usuario,
+rechazo por foco ajeno/fuente fallida sin escritura y recuperación de F1 local.
+Las 13 incidencias originales se conservaron; las siete del ensayo permanecen
+separadas. Cierre: modo off, Fn libres y selección original restaurada.
+Los apartados históricos conservan lo pendiente en su fecha; este cierre los
+actualiza en el alcance indicado, sin certificar otras plataformas o mapas.
+
 ## Fase 0: fundación y pruebas de integración con el entorno
 
 **Estado:** técnicamente completada por decisión del usuario el 28 de octubre de
@@ -1322,11 +1331,17 @@ lint/formato (64 archivos) y git diff --check correctos. Los resultados y eviden
 de conservación
 del entorno real se registran en INFORME_IMPLEMENTACION_MIGRACION_GNOME.md.
 
-**Criterio productivo pendiente:** respaldos nuevos local e independiente,
-ventana sin escritores externos, ejecución confirmada sobre GNOME real,
-verificación on/status/off con fuentes válidas y pruebas físicas posteriores
-autorizadas. No se presenta este código ni los tests como migración real,
-liberación física de teclas o prueba de mpv/Okular completadas.
+**Criterio productivo satisfecho posteriormente en 026–028:** respaldos local e
+independiente verificados, migración real complete, ciclo on/status/off y siete
+capturas físicas con mapa inicial. Se contrastaron SQLite/fuentes y avisos
+manuales, rechazo por foco ajeno y audio indisponible, y devolución de F1 a Okular.
+La disponibilidad inicial de mpv bloqueó el ciclo en 026; 027 recuperó la instancia
+mediante launch-mpv. En 028 se usaron solo fuentes sintéticas del ensayo y no se
+relanzó el mpv original, que volvía a estar cerrado. No se repitió la migración
+ni se modificaron las cuatro bases originales. Informes:
+[026](INFORME_EJECUCION_MIGRACION_GNOME.md),
+[027](INFORME_VALIDACION_MODO_CORRECCION_REAL.md),
+[028](INFORME_VALIDACION_FISICA_ATAJOS.md).
 
 ## Fase 3: exportación a plantilla Excel corporativa
 
@@ -1341,6 +1356,12 @@ exportación probada sobre ella, con revisión de que conserva el formato y los
 elementos requeridos de la plantilla.
 
 ## Fase 4: interfaz de revisión
+
+**Estado:** propuesta documental; no implementada. El siguiente bloque propuesto
+puede abordar gestión/revisión sin desbloquear Excel ni alterar la captura GNOME.
+La [propuesta de arquitectura](PROPUESTA_ARQUITECTURA_GUI.md) compara bibliotecas,
+delimita adaptadores por plataforma y divide el trabajo en incrementos con
+criterios de salida. No autoriza instalar dependencias o implementar la GUI.
 
 **Objetivo:** incorporar una interfaz para revisar las incidencias guardadas,
 definiendo con el usuario las operaciones necesarias y manteniendo la GUI
@@ -1383,9 +1404,14 @@ y tests propios; las propuestas no aprobadas permanecen pendientes.
 - **Okular:** documento y página obtenidos mediante D-Bus en la Fase 0.4; lectura
   de texto seleccionado mediante PRIMARY de X11 verificada de forma aislada en
   la Fase 0.5. Quedan los límites de vistas, PDFs y vigencia indicados arriba.
-- **Selección y atajos en Linux:** PRIMARY/CLIPBOARD comprobados en X11; la
-  coordinación solo se ha probado mediante CLI manual. Atajos y foco siguen
-  pendientes, sin asumir portabilidad a Wayland.
+- **Selección y atajos en Linux:** F1–F7, avisos, foco y liberación local validados
+  físicamente en GNOME/X11 tras la migración (028). No se asume portabilidad a
+  Wayland, Windows o macOS; PRIMARY puede conservar texto antiguo o ajeno y no
+  garantiza selección visual vigente. Las lecturas siguen siendo secuenciales.
+- **Disponibilidad de fuentes:** cerrar mpv puede dejar un socket sin servidor;
+  selección válida no implica fuentes disponibles. Se rechaza sin escribir ni
+  cambiar de trabajo. El relanzamiento explícito reutiliza la lista guardada,
+  sin restaurar automáticamente capítulo/timestamp; no borrar sockets a mano.
 - **Coherencia de la captura:** captura conjunta verificada con recursos de prueba
   y cambios manuales de posición, página y texto. Queda contrastarla en uso real,
   sin asumir atomicidad ni procedencia/vigencia del texto obtenido de PRIMARY.
